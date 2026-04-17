@@ -1,0 +1,40 @@
+name: default
+
+batch_size: 64
+epochs: 100
+shuffle_buffer: 1024
+prefetch: AUTOTUNE
+
+optimizer:
+  _target_: tensorflow.keras.optimizers.Adam
+  learning_rate: 1.0e-3
+
+loss:
+  type: binary_crossentropy   # alternative: focal
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+
+class_weight: auto            # Compute from training set; null = uniform.
+
+metrics:
+  - accuracy
+  - auc
+  - precision
+  - recall
+
+callbacks:
+  early_stopping:
+    monitor: val_auc
+    mode: max
+    patience: 12
+    restore_best_weights: true
+  model_checkpoint:
+    monitor: val_auc
+    mode: max
+    save_best_only: true
+  reduce_lr:
+    monitor: val_loss
+    mode: min
+    factor: 0.5
+    patience: 4
+    min_lr: 1.0e-6

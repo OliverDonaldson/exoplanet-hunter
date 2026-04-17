@@ -1,0 +1,18 @@
+# Tiny dataset for fast iteration / smoke testing / CI.
+# Should build end-to-end in under 10 minutes on a fast connection.
+name: small
+
+n_confirmed: 10
+n_false_pos: 10
+n_quiet:     10
+
+sectors: null
+author:  SPOC
+cadence: 120
+
+seed: ${seed}
+
+split:
+  train: 0.6
+  val:   0.2
+  test:  0.2

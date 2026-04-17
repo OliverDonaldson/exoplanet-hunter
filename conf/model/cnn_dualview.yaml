@@ -1,0 +1,26 @@
+# Dual-view 1D CNN — Shallue & Vanderburg 2018 architecture.
+# Builds via the Keras Functional API (matches DATA 305 Week 5 notes).
+name: cnn_dualview
+type: keras
+
+use_aux_features: false    # Set true when stellar params are joined into the model.
+
+global_view:
+  conv_blocks: [16, 32, 64, 128, 256]   # Filters per block.
+  conv_per_block: 2
+  kernel_size: 5
+  pool_size: 2
+
+local_view:
+  conv_blocks: [16, 32]
+  conv_per_block: 2
+  kernel_size: 5
+  pool_size: 2
+
+head:
+  fc_units: [512, 512, 512, 512]
+  dropout: 0.3
+
+output:
+  activation: sigmoid
+  units: 1

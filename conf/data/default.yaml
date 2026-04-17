@@ -1,0 +1,25 @@
+# Full labelled dataset. Long to build (downloads many TESS sectors).
+name: default
+
+# How many targets per disposition class to include.
+n_confirmed: 500   # CP/KP — confirmed planets
+n_false_pos: 500   # FP/FA — false positives
+n_quiet:     500   # No flagged signals (negative class supplement)
+
+# Sector filtering — None means use everything available.
+sectors: null
+
+# Author preference; SPOC is the official mission pipeline.
+author: SPOC
+
+# Cadence in seconds. 120 = 2-min cadence (most TOIs); 1800 = 30-min FFI.
+cadence: 120
+
+# Random seed used when sub-sampling the catalogue.
+seed: ${seed}
+
+# Train/val/test split fractions; stratified on label.
+split:
+  train: 0.7
+  val:   0.15
+  test:  0.15

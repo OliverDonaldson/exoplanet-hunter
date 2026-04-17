@@ -1,0 +1,20 @@
+name: random_forest
+type: sklearn
+
+estimator:
+  _target_: sklearn.ensemble.RandomForestClassifier
+  n_estimators: 500
+  max_depth: null
+  min_samples_split: 4
+  min_samples_leaf: 2
+  max_features: sqrt
+  class_weight: balanced
+  n_jobs: -1
+  random_state: ${seed}
+
+cross_validation:
+  n_splits: 5
+  shuffle: true
+  random_state: ${seed}
+
+feature_importance: true   # Compute SHAP values + log to MLflow.

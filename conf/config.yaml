@@ -1,0 +1,40 @@
+# Top-level Hydra config. Compose by overriding groups on the CLI:
+#   python scripts/train_model.py model=cnn_dualview data=small
+#
+# Hydra writes per-run output under outputs/YYYY-MM-DD/HH-MM-SS/ by default.
+
+defaults:
+  - data: default
+  - preprocess: default
+  - model: cnn_dualview
+  - train: default
+  - _self_
+
+# Globals
+project_name: exoplanet-hunter
+seed: 42
+
+paths:
+  root:           ${oc.env:PROJECT_ROOT,${hydra:runtime.cwd}}
+  data_raw:       ${paths.root}/data/raw
+  data_interim:   ${paths.root}/data/interim
+  data_processed: ${paths.root}/data/processed
+  data_labels:    ${paths.root}/data/labels
+  models:         ${paths.root}/models
+  results:        ${paths.root}/results
+
+mlflow:
+  tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,file:${paths.root}/mlruns}
+  experiment:   ${project_name}
+
+logging:
+  level: INFO
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false

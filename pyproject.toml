@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "exoplanet-hunter"
+version = "0.1.0"
+description = "Deep-learning pipeline for detecting exoplanet transits in NASA TESS light curves."
+authors = [{ name = "Oliver Donaldson" }]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["astronomy", "exoplanets", "tess", "deep-learning", "machine-learning"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+exoplanet_hunter = ["py.typed"]
+
+# ---------------------------- Ruff ----------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+extend-exclude = ["data", "mlruns", "models", "results", "notebooks/.ipynb_checkpoints"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # flake8-bugbear
+    "UP",       # pyupgrade
+    "SIM",      # flake8-simplify
+    "RUF",      # ruff-specific rules
+    "NPY",      # numpy
+    "PD",       # pandas-vet
+]
+ignore = [
+    "E501",     # line length handled by formatter
+    "PD901",    # `df` is a fine name for an example
+]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/**" = ["E402", "F401"]
+"tests/**"     = ["B011"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------- mypy ----------------------------
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+warn_unused_configs = true
+disallow_untyped_defs = false
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true     # astronomy libs lack stubs
+
+[[tool.mypy.overrides]]
+module = "exoplanet_hunter.*"
+disallow_untyped_defs = true      # opt in to strict typing for our own code
+
+# ---------------------------- pytest --------------------------
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "network: hits MAST/NASA Exoplanet Archive (skipped by default)",
+    "slow: takes more than a few seconds",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:lightkurve.*",
+    "ignore::DeprecationWarning:astropy.*",
+]

@@ -1,0 +1,55 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Environments ---
+.venv/
+venv/
+env/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# --- Data + artifacts (large, regeneratable) ---
+data/raw/
+data/interim/
+data/processed/
+!data/labels/.gitkeep
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+models/*.keras
+models/*.h5
+models/*.joblib
+results/
+mlruns/
+mlartifacts/
+outputs/                # Hydra default output dir
+multirun/
+
+# --- lightkurve cache (shared, big) ---
+.lightkurve-cache/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example

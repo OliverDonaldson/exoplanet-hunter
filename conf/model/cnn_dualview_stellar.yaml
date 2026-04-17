@@ -1,0 +1,32 @@
+# Dual-view CNN extended with auxiliary stellar features.
+# Wide & Deep pattern from the Keras Functional API notes — stellar params
+# bypass the conv towers and are concatenated directly into the head.
+name: cnn_dualview_stellar
+type: keras
+
+use_aux_features: true
+aux_feature_names:
+  - teff       # Stellar effective temperature [K]
+  - radius     # Stellar radius [Rsun]
+  - logg       # Surface gravity log10(cm/s^2)
+  - tmag       # TESS magnitude
+
+global_view:
+  conv_blocks: [16, 32, 64, 128, 256]
+  conv_per_block: 2
+  kernel_size: 5
+  pool_size: 2
+
+local_view:
+  conv_blocks: [16, 32]
+  conv_per_block: 2
+  kernel_size: 5
+  pool_size: 2
+
+head:
+  fc_units: [512, 512, 512, 512]
+  dropout: 0.3
+
+output:
+  activation: sigmoid
+  units: 1
