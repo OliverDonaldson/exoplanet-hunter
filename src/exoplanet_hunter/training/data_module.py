@@ -99,6 +99,7 @@ class LightcurveDataset:
         noise_std: float = 1e-4,
         flip_prob: float = 0.5,
         use_aux: bool = False,
+        seed: int | None = None,
     ) -> None:
         self.v = views
         self.batch_size = batch_size
@@ -108,6 +109,10 @@ class LightcurveDataset:
         self.noise_std = noise_std
         self.flip_prob = flip_prob
         self.use_aux = use_aux and views.aux_features is not None
+        # If the caller doesn't pass a seed we still want a deterministic
+        # shuffle for the default case (test fixtures, CI). A `None` here
+        # would mean "use TF global state", which is non-reproducible.
+        self.seed = 42 if seed is None else int(seed)
 
     # ------------------------------------------------------------ augmentation
 
@@ -150,7 +155,7 @@ class LightcurveDataset:
             ds = tf.data.Dataset.from_tensor_slices(((g, l), y))
 
         if self.shuffle:
-            ds = ds.shuffle(buffer_size=min(1024, len(y)), seed=42)
+            ds = ds.shuffle(buffer_size=min(1024, len(y)), seed=self.seed)
 
         if self.augment:
 

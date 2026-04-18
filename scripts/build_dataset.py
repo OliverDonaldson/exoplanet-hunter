@@ -68,25 +68,37 @@ def main(cfg: DictConfig) -> None:
     tic_ids: list[int] = []
     aux: list[list[float]] = []
 
+    # Track *why* targets get dropped — invaluable on a long overnight build.
+    # Catalog units are now days throughout (see catalog._query_toi docstring).
+    skips = {
+        "no_download": 0,
+        "missing_ephemeris": 0,
+        "missing_fits": 0,
+        "preprocess_error": 0,
+    }
+
     for _, row in tqdm(catalog.iterrows(), total=len(catalog), desc="processing"):
         tic = int(row["tic_id"])
         if tic not in success_tics:
+            skips["no_download"] += 1
             continue
         period = row.get("period")
         t0 = row.get("t0")
-        # duration in TOI table is hours; convert. PS table is days. Coerce
-        # anything we don't trust to a nominal 0.1 day (won't be used for
-        # training quiet stars — we skip them when no period is present).
-        duration_raw = row.get("duration")
-        if (period is None or np.isnan(period)) or (t0 is None or np.isnan(t0)):
+        duration = row.get("duration")
+        if (
+            period is None
+            or np.isnan(period)
+            or t0 is None
+            or np.isnan(t0)
+            or duration is None
+            or np.isnan(duration)
+        ):
+            skips["missing_ephemeris"] += 1
             continue
-        if duration_raw is None or np.isnan(duration_raw):
-            continue
-        # heuristic: if duration > 1 we assume hours (TOI), else days (PS).
-        duration = float(duration_raw) / 24.0 if float(duration_raw) > 1.0 else float(duration_raw)
 
         path = paths.data_raw / f"tic_{tic}.fits"
         if not path.exists():
+            skips["missing_fits"] += 1
             continue
         try:
             lc = lk.read(str(path))
@@ -107,6 +119,7 @@ def main(cfg: DictConfig) -> None:
             )
         except Exception as exc:
             log.warning("[build] TIC %d: preprocessing failed — %s", tic, exc)
+            skips["preprocess_error"] += 1
             continue
 
         # Stellar features (best-effort; NaN if unavailable).
@@ -123,6 +136,16 @@ def main(cfg: DictConfig) -> None:
         l_views.append(views.local_view)
         labels.append(int(row["label"]))
         tic_ids.append(tic)
+
+    log.info(
+        "[build] kept %d targets;  skipped: no_download=%d  missing_ephemeris=%d  "
+        "missing_fits=%d  preprocess_error=%d",
+        len(g_views),
+        skips["no_download"],
+        skips["missing_ephemeris"],
+        skips["missing_fits"],
+        skips["preprocess_error"],
+    )
 
     if not g_views:
         log.error("[build] no usable targets — check downloads and label catalogue")

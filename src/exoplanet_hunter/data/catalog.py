@@ -95,11 +95,17 @@ def _query_confirmed_planets() -> pd.DataFrame:
 
 
 def _query_toi() -> pd.DataFrame:
-    """All TOIs with their disposition — includes both candidates and false positives."""
+    """All TOIs with their disposition — includes both candidates and false positives.
+
+    Note: TOI's `pl_trandurh` is in **hours** while `ps.pl_trandur` (in
+    `_query_confirmed_planets`) is in **days**. We convert to days here so
+    the combined catalogue has consistent units throughout — downstream
+    code (build_dataset.py, score_target.py, build_views) all expect days.
+    """
     adql = (
         "select toi, tid as tic_id, "
         "       pl_orbper as period, pl_tranmid as t0, "
-        "       pl_trandep as depth, pl_trandurh as duration, "
+        "       pl_trandep as depth, pl_trandurh / 24.0 as duration, "
         "       tfopwg_disp as disposition, "
         "       st_teff as teff, st_rad as radius, "
         "       st_logg as logg, st_tmag as tmag "

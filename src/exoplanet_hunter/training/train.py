@@ -241,6 +241,7 @@ def _train_keras(
         noise_std=float(cfg.preprocess.augmentation.noise_std),
         flip_prob=float(cfg.preprocess.augmentation.flip_prob),
         use_aux=use_aux,
+        seed=int(cfg.seed),
     ).to_tf_dataset()
     val_ds = LightcurveDataset(
         val_v,
@@ -248,6 +249,7 @@ def _train_keras(
         shuffle=False,
         augment=False,
         use_aux=use_aux,
+        seed=int(cfg.seed),
     ).to_tf_dataset()
     test_ds = LightcurveDataset(
         test_v,
@@ -255,6 +257,7 @@ def _train_keras(
         shuffle=False,
         augment=False,
         use_aux=use_aux,
+        seed=int(cfg.seed),
     ).to_tf_dataset()
 
     # Class weights from training labels (auto by default).
