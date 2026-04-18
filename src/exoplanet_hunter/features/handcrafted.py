@@ -14,10 +14,10 @@ from scipy import stats
 
 FEATURE_NAMES: list[str] = [
     # --- transit shape ---
-    "depth",                # baseline - min(centre)
-    "depth_snr",            # depth / std(wings)
-    "duration_frac",        # fraction of bins below baseline - 1 sigma
-    "min_flux",             # global min of view
+    "depth",  # baseline - min(centre)
+    "depth_snr",  # depth / std(wings)
+    "duration_frac",  # fraction of bins below baseline - 1 sigma
+    "min_flux",  # global min of view
     "centre_mean",
     "centre_std",
     "wing_mean",
@@ -26,10 +26,10 @@ FEATURE_NAMES: list[str] = [
     "skewness",
     "kurtosis",
     # --- asymmetry / V-shape (eclipsing-binary signal) ---
-    "asymmetry",            # |mean(left half) - mean(right half)| in centre
-    "v_shape_score",        # how V-shaped vs U-shaped the dip is
+    "asymmetry",  # |mean(left half) - mean(right half)| in centre
+    "v_shape_score",  # how V-shaped vs U-shaped the dip is
     # --- broad statistics ---
-    "n_below_2sigma",       # fraction of points more than 2σ below baseline
+    "n_below_2sigma",  # fraction of points more than 2-sigma below baseline
     "n_below_3sigma",
 ]
 
@@ -45,10 +45,10 @@ def extract_features(view: np.ndarray) -> np.ndarray:
 
     n = view.size
     centre_slice = slice(int(0.4 * n), int(0.6 * n))
-    left_wing    = view[: int(0.2 * n)]
-    right_wing   = view[int(0.8 * n):]
-    wings        = np.concatenate([left_wing, right_wing])
-    centre       = view[centre_slice]
+    left_wing = view[: int(0.2 * n)]
+    right_wing = view[int(0.8 * n) :]
+    wings = np.concatenate([left_wing, right_wing])
+    centre = view[centre_slice]
 
     sigma = float(np.std(wings) + 1e-10)
     baseline = float(np.median(wings))
@@ -60,14 +60,11 @@ def extract_features(view: np.ndarray) -> np.ndarray:
 
     # V-shape vs U-shape: U is flat at the bottom, V comes to a sharp point.
     # Compare central std to a true V's expected std.
-    centre_min = float(np.min(centre))
-    if depth > 1e-6:
-        v_shape_score = float(np.std(centre)) / (depth + 1e-10)
-    else:
-        v_shape_score = 0.0
+    v_shape_score = float(np.std(centre)) / (depth + 1e-10) if depth > 1e-6 else 0.0
 
-    asymmetry = abs(float(np.mean(centre[: len(centre) // 2]))
-                    - float(np.mean(centre[len(centre) // 2 :])))
+    asymmetry = abs(
+        float(np.mean(centre[: len(centre) // 2])) - float(np.mean(centre[len(centre) // 2 :]))
+    )
 
     return np.array(
         [

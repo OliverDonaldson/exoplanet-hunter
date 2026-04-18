@@ -67,6 +67,6 @@ def _safe_float(x: object) -> float | None:
 
 def _safe_int(x: object) -> int | None:
     try:
-        return int(x)                                         # type: ignore[arg-type]
+        return int(x)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return None

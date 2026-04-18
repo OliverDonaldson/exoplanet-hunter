@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 def fold_and_bin(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     period: float,
     t0: float,
     n_bins: int,
@@ -32,12 +32,12 @@ def fold_and_bin(
     """
     folded = lc.fold(period=period, epoch_time=t0)
     phase = np.asarray(folded.time.value, dtype=float)
-    flux  = np.asarray(folded.flux.value, dtype=float)
+    flux = np.asarray(folded.flux.value, dtype=float)
 
     # Restrict to the requested phase window and drop NaNs.
     mask = (phase >= phase_min) & (phase <= phase_max) & np.isfinite(flux)
     phase = phase[mask]
-    flux  = flux[mask]
+    flux = flux[mask]
 
     edges = np.linspace(phase_min, phase_max, n_bins + 1)
     centers = 0.5 * (edges[:-1] + edges[1:])

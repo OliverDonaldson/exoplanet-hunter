@@ -48,7 +48,7 @@ def _normalise(view: np.ndarray) -> np.ndarray:
 
 
 def build_views(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     period: float,
     t0: float,
     duration: float,
@@ -76,19 +76,25 @@ def build_views(
 
     # ----- global ---------------------------------------------------------
     _, gview = fold_and_bin(
-        lc, period=period, t0=t0,
+        lc,
+        period=period,
+        t0=t0,
         n_bins=global_bins,
-        phase_min=-0.5, phase_max=0.5,
+        phase_min=-0.5,
+        phase_max=0.5,
     )
 
     # ----- local ----------------------------------------------------------
-    half = local_durations * duration / period   # half-window in phase units
-    half = float(min(max(half, 1e-3), 0.5))       # clamp to a sane range
+    half = local_durations * duration / period  # half-window in phase units
+    half = float(min(max(half, 1e-3), 0.5))  # clamp to a sane range
 
     _, lview = fold_and_bin(
-        lc, period=period, t0=t0,
+        lc,
+        period=period,
+        t0=t0,
         n_bins=local_bins,
-        phase_min=-half, phase_max=+half,
+        phase_min=-half,
+        phase_max=+half,
     )
 
     return Views(

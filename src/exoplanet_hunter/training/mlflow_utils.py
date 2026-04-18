@@ -38,22 +38,27 @@ def setup_mlflow(cfg: DictConfig) -> None:
 
 def _git_sha() -> str | None:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except Exception:                                 # noqa: BLE001
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
         return None
 
 
 def log_config(cfg: DictConfig) -> None:
     """Flatten an OmegaConf config into MLflow params (truncating long values)."""
-    flat = _flatten_dict(OmegaConf.to_container(cfg, resolve=True))     # type: ignore[arg-type]
+    flat = _flatten_dict(OmegaConf.to_container(cfg, resolve=True))
     for k, v in flat.items():
         s = str(v)
         if len(s) > 250:
             s = s[:247] + "..."
         mlflow.log_param(k, s)
-    if (sha := _git_sha()):
+    if sha := _git_sha():
         mlflow.set_tag("git_sha", sha)
 
 
@@ -85,14 +90,17 @@ def log_classification_artifacts(
     # --- metrics ---------------------------------------------------------
     auc = roc_auc_score(y_true, y_score)
     precision, recall, f1, _ = precision_recall_fscore_support(
-        y_true, y_pred, average="binary", zero_division=0,
+        y_true,
+        y_pred,
+        average="binary",
+        zero_division=0,
     )
     mlflow.log_metrics(
         {
-            "test_roc_auc":   float(auc),
+            "test_roc_auc": float(auc),
             "test_precision": float(precision),
-            "test_recall":    float(recall),
-            "test_f1":        float(f1),
+            "test_recall": float(recall),
+            "test_f1": float(f1),
         }
     )
 
@@ -127,8 +135,14 @@ def log_classification_artifacts(
     ax.set_yticks([0, 1], labels=["non-planet", "planet"])
     for i in range(2):
         for j in range(2):
-            ax.text(j, i, int(cm[i, j]), ha="center", va="center",
-                    color="white" if cm[i, j] > cm.max() / 2 else "black")
+            ax.text(
+                j,
+                i,
+                str(int(cm[i, j])),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > cm.max() / 2 else "black",
+            )
     fig.colorbar(im, ax=ax)
     fig.tight_layout()
     cm_path = out_dir / "confusion_matrix.png"

@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 
 
 def clean_lightcurve(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     sigma_clip: float = 5.0,
     min_points: int = 1000,
-) -> "lk.LightCurve":
+) -> lk.LightCurve:
     """Drop NaNs and sigma-clip outliers.
 
     Parameters
@@ -33,22 +33,21 @@ def clean_lightcurve(
     cleaned = lc.remove_nans().remove_outliers(sigma=sigma_clip)
     if len(cleaned) < min_points:
         raise ValueError(
-            f"only {len(cleaned)} good cadences after cleaning "
-            f"(required ≥{min_points})"
+            f"only {len(cleaned)} good cadences after cleaning " f"(required ≥{min_points})"
         )
     return cleaned
 
 
 def flatten_lightcurve(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     window_length: int = 301,
     polyorder: int = 2,
-) -> "lk.LightCurve":
+) -> lk.LightCurve:
     """Remove long-term stellar variability with a Savitzky-Golay filter.
 
     `window_length` is in cadences, not days. For 2-min cadence (30 / hour),
     window 301 ≈ 10 hours — comfortably wider than typical short-period
-    transits (1–6 h) so the transit dip is preserved.
+    transits (1-6 h) so the transit dip is preserved.
 
     Returns a new LightCurve with the trend divided out (median-normalised).
     """

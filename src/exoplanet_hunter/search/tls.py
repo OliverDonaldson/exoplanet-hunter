@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def tls_period_search(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     *,
     period_min: float = 0.5,
     period_max: float = 15.0,
@@ -32,9 +32,8 @@ def tls_period_search(
     NOTE: requires `transitleastsquares` (in environment.yml). The library
     is opinionated about input format — we adapt by passing time/flux arrays.
     """
-    from transitleastsquares import transitleastsquares
-
     import numpy as np
+    from transitleastsquares import transitleastsquares
 
     time = np.asarray(lc.time.value, dtype=float)
     flux = np.asarray(lc.flux.value, dtype=float)

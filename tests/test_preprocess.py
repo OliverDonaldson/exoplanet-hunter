@@ -26,7 +26,7 @@ def _make_synthetic_lc(
     noise: float = 0.0005,
     long_trend_amp: float = 0.01,
     seed: int = 1,
-) -> "lk.LightCurve":
+) -> lk.LightCurve:
     """Return a TESS-like LightCurve with injected box transits + slow trend."""
     rng = np.random.default_rng(seed)
     cad_d = cadence_min / (60 * 24)
@@ -52,7 +52,7 @@ def test_clean_lightcurve_preserves_dip() -> None:
     lc = _make_synthetic_lc()
     cleaned = clean_lightcurve(lc, sigma_clip=5.0, min_points=100)
     assert len(cleaned) > 0
-    assert float(np.min(cleaned.flux.value)) < 1.0    # the dip survived
+    assert float(np.min(cleaned.flux.value)) < 1.0  # the dip survived
 
 
 def test_flatten_lightcurve_removes_slow_trend() -> None:

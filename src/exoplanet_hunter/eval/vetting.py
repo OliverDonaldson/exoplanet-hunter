@@ -37,7 +37,7 @@ class CandidateReport:
 
 
 def vetting_figure(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     report: CandidateReport,
     out_path: Path,
 ) -> Path:

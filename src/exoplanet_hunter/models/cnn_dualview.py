@@ -5,7 +5,7 @@ Architecture overview:
   global_view (2001,) ──► Conv tower (5 blocks, 16→256) ──► flatten ──┐
                                                                        ├─► concat
   local_view  (201,)  ──► Conv tower (2 blocks, 16→32)  ──► flatten ──┤        │
-                                                                       │        ├─► FC×4 (512) ──► sigmoid
+                                                                       │        ├─► FC x4 (512) ──► sigmoid
                                             aux_features (n,) ────────┘        │
                                                             (Wide path) ───────┘
 
@@ -78,7 +78,7 @@ def build_cnn_dualview(
         pool_size=int(model_cfg.global_view.pool_size),
         name="global",
     )
-    l = _conv_tower(                                              # noqa: E741
+    l = _conv_tower(
         l_in,
         filters_per_block=list(model_cfg.local_view.conv_blocks),
         conv_per_block=int(model_cfg.local_view.conv_per_block),
@@ -91,6 +91,7 @@ def build_cnn_dualview(
     branches: list[tf.Tensor] = [g, l]
 
     if use_aux:
+        assert aux_input_dim is not None, "aux_input_dim is required when use_aux=True"
         a_in = layers.Input(shape=(int(aux_input_dim),), name="aux_features")
         inputs.append(a_in)
         branches.append(a_in)                       # wide path — no transformation

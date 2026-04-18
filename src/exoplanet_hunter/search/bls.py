@@ -27,7 +27,7 @@ class PeriodSearchResult:
 
 
 def bls_period_search(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     *,
     period_min: float = 0.5,
     period_max: float = 15.0,
@@ -47,9 +47,9 @@ def bls_period_search(
     )
     best = int(np.argmax(result.power))
     period = float(result.period[best])
-    t0     = float(result.transit_time[best])
-    dur    = float(result.duration[best])
-    power  = float(result.power[best])
+    t0 = float(result.transit_time[best])
+    dur = float(result.duration[best])
+    power = float(result.power[best])
 
     # Crude SNR estimate: peak power / median power.
     snr = power / float(np.median(result.power) + 1e-12)

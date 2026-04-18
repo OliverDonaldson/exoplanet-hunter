@@ -38,16 +38,16 @@ def main(cfg: DictConfig) -> None:
     paths = ProjectPaths.from_cfg(cfg)
 
     # CLI-only fields, with defaults pulled from cfg.
-    tic_id        = int(getattr(cfg, "tic_id", 0))
+    tic_id = int(getattr(cfg, "tic_id", 0))
     if not tic_id:
         log.error("usage: scripts/score_target.py tic_id=<TIC>")
         sys.exit(2)
-    model_type    = str(getattr(cfg, "model_type", "cnn"))   # "cnn" | "rf"
-    force_dl      = bool(getattr(cfg, "force_download", False))
-    period        = getattr(cfg, "period", None)
-    t0            = getattr(cfg, "t0", None)
-    duration_h    = getattr(cfg, "duration_h", None)
-    n_mc          = int(getattr(cfg, "n_mc", 50))
+    model_type = str(getattr(cfg, "model_type", "cnn"))  # "cnn" | "rf"
+    force_dl = bool(getattr(cfg, "force_download", False))
+    period = getattr(cfg, "period", None)
+    t0 = getattr(cfg, "t0", None)
+    duration_h = getattr(cfg, "duration_h", None)
+    n_mc = int(getattr(cfg, "n_mc", 50))
 
     # --- Download + clean ----------------------------------------------
     import lightkurve as lk
@@ -71,15 +71,25 @@ def main(cfg: DictConfig) -> None:
         log.info("[score] running BLS period search ...")
         bls = bls_period_search(lc)
         period = float(bls.period)
-        t0     = float(bls.t0)
+        t0 = float(bls.t0)
         duration = float(bls.duration)
-        log.info("[score] BLS best: P=%.4f d  t0=%.4f  dur=%.3f d  SNR=%.2f",
-                 period, t0, duration, bls.snr)
+        log.info(
+            "[score] BLS best: P=%.4f d  t0=%.4f  dur=%.3f d  SNR=%.2f",
+            period,
+            t0,
+            duration,
+            bls.snr,
+        )
     else:
-        period = float(period); t0 = float(t0); duration = float(duration_h) / 24.0
+        period = float(period)
+        t0 = float(t0)
+        duration = float(duration_h) / 24.0
 
     views = build_views(
-        lc, period=period, t0=t0, duration=duration,
+        lc,
+        period=period,
+        t0=t0,
+        duration=duration,
         global_bins=int(cfg.preprocess.views.global_bins),
         local_bins=int(cfg.preprocess.views.local_bins),
         local_durations=float(cfg.preprocess.views.local_durations),
@@ -99,12 +109,16 @@ def main(cfg: DictConfig) -> None:
 
         inputs = {
             "global_view": views.global_view[None, :, None].astype(np.float32),
-            "local_view":  views.local_view[None,  :, None].astype(np.float32),
+            "local_view": views.local_view[None, :, None].astype(np.float32),
         }
         result = mc_dropout_predict(model, inputs, n_samples=n_mc)
         log.info(
             "[score] TIC %d  P=%.4f d  →  prob = %.3f ± %.3f  (MC dropout n=%d)",
-            tic_id, period, float(result.mean), float(result.std), n_mc,
+            tic_id,
+            period,
+            float(result.mean),
+            float(result.std),
+            n_mc,
         )
     elif model_type == "rf":
         import joblib
@@ -118,8 +132,7 @@ def main(cfg: DictConfig) -> None:
         pipeline = joblib.load(ckpt)
         feats = extract_features(views.global_view).reshape(1, -1)
         prob = float(pipeline.predict_proba(feats)[0, 1])
-        log.info("[score] TIC %d  P=%.4f d  →  prob = %.3f  (random forest)",
-                 tic_id, period, prob)
+        log.info("[score] TIC %d  P=%.4f d  →  prob = %.3f  (random forest)", tic_id, period, prob)
     else:
         log.error("[score] unknown model_type=%s (use 'cnn' or 'rf')", model_type)
         sys.exit(2)

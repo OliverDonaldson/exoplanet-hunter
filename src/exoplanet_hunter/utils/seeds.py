@@ -18,7 +18,10 @@ def set_global_seed(seed: int) -> None:
     try:
         import numpy as np
 
-        np.random.seed(seed)
+        # Seeding the legacy global PRNG is intentional here: this is a
+        # "seed the whole world" entry point and many third-party libs
+        # still pull from np.random.* directly.
+        np.random.seed(seed)  # noqa: NPY002
     except ImportError:
         pass
 

@@ -12,8 +12,6 @@ Logs every run to MLflow. Saves best checkpoint to `models/`.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import hydra
 import joblib
 import mlflow
@@ -31,6 +29,7 @@ from exoplanet_hunter.models import (
 )
 from exoplanet_hunter.training.data_module import (
     LightcurveDataset,
+    ViewArrays,
     load_views,
     train_val_test_split,
 )
@@ -46,8 +45,13 @@ from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
 log = get_logger(__name__)
 
 
-@hydra.main(version_base="1.3", config_path="../../../conf", config_name="config")
-def main(cfg: DictConfig) -> float:
+def run(cfg: DictConfig) -> float:
+    """Train one model from a fully-resolved Hydra config.
+
+    Decoupled from `@hydra.main` so it can be invoked from any entry-point
+    script (e.g. `scripts/train_model.py`) without the script needing to
+    re-resolve the config-path issue.
+    """
     set_global_seed(int(cfg.seed))
     paths = ProjectPaths.from_cfg(cfg)
     setup_mlflow(cfg)
@@ -68,7 +72,9 @@ def main(cfg: DictConfig) -> float:
     )
     log.info(
         "[train] split sizes — train=%d  val=%d  test=%d",
-        len(train_v.labels), len(val_v.labels), len(test_v.labels),
+        len(train_v.labels),
+        len(val_v.labels),
+        len(test_v.labels),
     )
 
     if cfg.model.type == "sklearn":
@@ -78,10 +84,22 @@ def main(cfg: DictConfig) -> float:
     raise ValueError(f"unknown model type: {cfg.model.type}")
 
 
+@hydra.main(version_base="1.3", config_path="../../../conf", config_name="config")
+def main(cfg: DictConfig) -> float:
+    """Hydra entry-point for `python -m exoplanet_hunter.training.train`."""
+    return run(cfg)
+
+
 # ---------------------------------------------------------------- sklearn ----
 
 
-def _train_sklearn(cfg, paths, train_v, val_v, test_v) -> float:                # noqa: ANN001
+def _train_sklearn(
+    cfg: DictConfig,
+    paths: ProjectPaths,
+    train_v: ViewArrays,
+    val_v: ViewArrays,
+    test_v: ViewArrays,
+) -> float:
     import shap
     from sklearn.metrics import classification_report
 
@@ -93,7 +111,7 @@ def _train_sklearn(cfg, paths, train_v, val_v, test_v) -> float:                
 
     log.info("[train-rf] extracting handcrafted features ...")
     X_trainval = np.array([extract_features(v) for v in train_views_all])
-    X_test     = np.array([extract_features(v) for v in test_views])
+    X_test = np.array([extract_features(v) for v in test_views])
 
     pipeline = build_random_forest(cfg.model)
 
@@ -114,7 +132,7 @@ def _train_sklearn(cfg, paths, train_v, val_v, test_v) -> float:                
             cv_aucs.append(auc)
             mlflow.log_metric(f"cv_auc_fold_{fold}", float(auc))
         mlflow.log_metric("cv_auc_mean", float(np.mean(cv_aucs)))
-        mlflow.log_metric("cv_auc_std",  float(np.std(cv_aucs)))
+        mlflow.log_metric("cv_auc_std", float(np.std(cv_aucs)))
         log.info("[train-rf] CV AUC %.4f ± %.4f", np.mean(cv_aucs), np.std(cv_aucs))
 
         # Refit on full train+val and evaluate on test.
@@ -125,29 +143,38 @@ def _train_sklearn(cfg, paths, train_v, val_v, test_v) -> float:                
         log.info("[train-rf] test classification report:\n%s", report)
 
         log_classification_artifacts(
-            test_y, test_score, threshold=0.5, out_dir=paths.results / "rf",
+            test_y,
+            test_score,
+            threshold=0.5,
+            out_dir=paths.results / "rf",
         )
 
         # SHAP feature importance.
         if bool(cfg.model.feature_importance):
             try:
                 explainer = shap.TreeExplainer(pipeline.named_steps["clf"])
-                shap_values = explainer.shap_values(pipeline.named_steps["scaler"].transform(X_test))
+                shap_values = explainer.shap_values(
+                    pipeline.named_steps["scaler"].transform(X_test)
+                )
                 if isinstance(shap_values, list):  # binary: list of two arrays
                     shap_values = shap_values[1]
-                from exoplanet_hunter.features import FEATURE_NAMES
                 import matplotlib.pyplot as plt
+
+                from exoplanet_hunter.features import FEATURE_NAMES
+
                 plt.figure()
                 shap.summary_plot(
-                    shap_values, pipeline.named_steps["scaler"].transform(X_test),
-                    feature_names=FEATURE_NAMES, show=False,
+                    shap_values,
+                    pipeline.named_steps["scaler"].transform(X_test),
+                    feature_names=FEATURE_NAMES,
+                    show=False,
                 )
                 shap_path = paths.results / "rf" / "shap_summary.png"
                 plt.tight_layout()
                 plt.savefig(shap_path, dpi=120, bbox_inches="tight")
                 plt.close()
                 mlflow.log_artifact(str(shap_path))
-            except Exception as exc:                                            # noqa: BLE001
+            except Exception as exc:
                 log.warning("[train-rf] SHAP failed: %s", exc)
 
         # Save the fitted pipeline.
@@ -161,14 +188,18 @@ def _train_sklearn(cfg, paths, train_v, val_v, test_v) -> float:                
 # ----------------------------------------------------------------- keras -----
 
 
-def _train_keras(cfg, paths, train_v, val_v, test_v) -> float:                  # noqa: ANN001
+def _train_keras(
+    cfg: DictConfig,
+    paths: ProjectPaths,
+    train_v: ViewArrays,
+    val_v: ViewArrays,
+    test_v: ViewArrays,
+) -> float:
     import tensorflow as tf
 
     use_aux = bool(getattr(cfg.model, "use_aux_features", False))
     aux_dim = (
-        train_v.aux_features.shape[1]
-        if use_aux and train_v.aux_features is not None
-        else None
+        train_v.aux_features.shape[1] if use_aux and train_v.aux_features is not None else None
     )
 
     model = build_cnn_dualview(
@@ -191,10 +222,10 @@ def _train_keras(cfg, paths, train_v, val_v, test_v) -> float:                  
         raise ValueError(f"unknown loss: {cfg.train.loss.type}")
 
     metrics_map = {
-        "accuracy":  "accuracy",
-        "auc":       tf.keras.metrics.AUC(name="auc"),
+        "accuracy": "accuracy",
+        "auc": tf.keras.metrics.AUC(name="auc"),
         "precision": tf.keras.metrics.Precision(name="precision"),
-        "recall":    tf.keras.metrics.Recall(name="recall"),
+        "recall": tf.keras.metrics.Recall(name="recall"),
     }
     metrics = [metrics_map[m] for m in cfg.train.metrics if m in metrics_map]
 
@@ -212,21 +243,30 @@ def _train_keras(cfg, paths, train_v, val_v, test_v) -> float:                  
         use_aux=use_aux,
     ).to_tf_dataset()
     val_ds = LightcurveDataset(
-        val_v, batch_size=int(cfg.train.batch_size),
-        shuffle=False, augment=False, use_aux=use_aux,
+        val_v,
+        batch_size=int(cfg.train.batch_size),
+        shuffle=False,
+        augment=False,
+        use_aux=use_aux,
     ).to_tf_dataset()
     test_ds = LightcurveDataset(
-        test_v, batch_size=int(cfg.train.batch_size),
-        shuffle=False, augment=False, use_aux=use_aux,
+        test_v,
+        batch_size=int(cfg.train.batch_size),
+        shuffle=False,
+        augment=False,
+        use_aux=use_aux,
     ).to_tf_dataset()
 
     # Class weights from training labels (auto by default).
     class_weight = None
     if str(cfg.train.class_weight) == "auto":
         from sklearn.utils.class_weight import compute_class_weight
+
         classes = np.array([0, 1])
         weights = compute_class_weight(
-            class_weight="balanced", classes=classes, y=train_v.labels.astype(int),
+            class_weight="balanced",
+            classes=classes,
+            y=train_v.labels.astype(int),
         )
         class_weight = dict(zip(classes.tolist(), weights.tolist(), strict=False))
         log.info("[train-cnn] class_weight=%s", class_weight)
@@ -251,7 +291,10 @@ def _train_keras(cfg, paths, train_v, val_v, test_v) -> float:                  
         test_score = model.predict(test_ds).squeeze()
         test_y = test_v.labels.astype(int)
         log_classification_artifacts(
-            test_y, test_score, threshold=0.5, out_dir=paths.results / "cnn",
+            test_y,
+            test_score,
+            threshold=0.5,
+            out_dir=paths.results / "cnn",
         )
 
         # Log final model.

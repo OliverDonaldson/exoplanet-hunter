@@ -18,7 +18,6 @@ Hydra entry point. Usage:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import hydra
 import numpy as np
@@ -58,24 +57,23 @@ def main(cfg: DictConfig) -> None:
     )
     results = downloader.download_many(catalog["tic_id"].tolist())
     success_tics = {r.tic_id for r in results if r.success}
-    log.info("[build] %d/%d TICs downloaded successfully",
-             len(success_tics), len(catalog))
+    log.info("[build] %d/%d TICs downloaded successfully", len(success_tics), len(catalog))
 
     # --- Stage 3 — preprocess into views -------------------------------
     import lightkurve as lk
 
     g_views: list[np.ndarray] = []
     l_views: list[np.ndarray] = []
-    labels:  list[int]        = []
-    tic_ids: list[int]        = []
-    aux:     list[list[float]]= []
+    labels: list[int] = []
+    tic_ids: list[int] = []
+    aux: list[list[float]] = []
 
     for _, row in tqdm(catalog.iterrows(), total=len(catalog), desc="processing"):
         tic = int(row["tic_id"])
         if tic not in success_tics:
             continue
-        period   = row.get("period")
-        t0       = row.get("t0")
+        period = row.get("period")
+        t0 = row.get("t0")
         # duration in TOI table is hours; convert. PS table is days. Coerce
         # anything we don't trust to a nominal 0.1 day (won't be used for
         # training quiet stars — we skip them when no period is present).
@@ -107,18 +105,20 @@ def main(cfg: DictConfig) -> None:
                 local_bins=int(cfg.preprocess.views.local_bins),
                 local_durations=float(cfg.preprocess.views.local_durations),
             )
-        except Exception as exc:                                      # noqa: BLE001
+        except Exception as exc:
             log.warning("[build] TIC %d: preprocessing failed — %s", tic, exc)
             continue
 
         # Stellar features (best-effort; NaN if unavailable).
         sp = fetch_stellar_params(tic)
-        aux.append([
-            sp.teff   if sp.teff   is not None else np.nan,
-            sp.radius if sp.radius is not None else np.nan,
-            sp.logg   if sp.logg   is not None else np.nan,
-            sp.tmag   if sp.tmag   is not None else np.nan,
-        ])
+        aux.append(
+            [
+                sp.teff if sp.teff is not None else np.nan,
+                sp.radius if sp.radius is not None else np.nan,
+                sp.logg if sp.logg is not None else np.nan,
+                sp.tmag if sp.tmag is not None else np.nan,
+            ]
+        )
         g_views.append(views.global_view)
         l_views.append(views.local_view)
         labels.append(int(row["label"]))
@@ -132,14 +132,15 @@ def main(cfg: DictConfig) -> None:
     np.savez_compressed(
         out,
         global_views=np.stack(g_views),
-        local_views =np.stack(l_views),
-        labels      =np.asarray(labels, dtype=np.int8),
-        tic_ids     =np.asarray(tic_ids, dtype=np.int64),
+        local_views=np.stack(l_views),
+        labels=np.asarray(labels, dtype=np.int8),
+        tic_ids=np.asarray(tic_ids, dtype=np.int64),
         aux_features=np.asarray(aux, dtype=np.float32),
     )
     log.info(
         "[build] wrote %d examples → %s  (pos=%d  neg=%d)",
-        len(labels), out,
+        len(labels),
+        out,
         int(np.sum(np.asarray(labels) == 1)),
         int(np.sum(np.asarray(labels) == 0)),
     )

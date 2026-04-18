@@ -31,3 +31,4 @@ repos:
           - numpy>=1.26
           - pandas-stubs
           - types-tqdm
+          - types-requests

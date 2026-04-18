@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("tensorflow")
 
 
-def test_load_views_split_and_dataset(synthetic_views_dataset) -> None:        # noqa: ANN001
+def test_load_views_split_and_dataset(synthetic_views_dataset) -> None:
     from exoplanet_hunter.training.data_module import (
         LightcurveDataset,
         ViewArrays,
@@ -17,7 +17,9 @@ def test_load_views_split_and_dataset(synthetic_views_dataset) -> None:        #
 
     g, l, y = synthetic_views_dataset
     views = ViewArrays(
-        global_views=g, local_views=l, labels=y,
+        global_views=g,
+        local_views=l,
+        labels=y,
         tic_ids=np.arange(len(y), dtype=np.int64),
         aux_features=None,
     )

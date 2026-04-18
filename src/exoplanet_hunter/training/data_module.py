@@ -30,9 +30,9 @@ from sklearn.model_selection import train_test_split
 @dataclass
 class ViewArrays:
     global_views: np.ndarray
-    local_views:  np.ndarray
-    labels:       np.ndarray
-    tic_ids:      np.ndarray
+    local_views: np.ndarray
+    labels: np.ndarray
+    tic_ids: np.ndarray
     aux_features: np.ndarray | None
 
 
@@ -42,9 +42,9 @@ def load_views(path: Path) -> ViewArrays:
         aux = f["aux_features"] if "aux_features" in f.files else None
         return ViewArrays(
             global_views=f["global_views"].astype(np.float32),
-            local_views =f["local_views"].astype(np.float32),
-            labels      =f["labels"].astype(np.int8),
-            tic_ids     =f["tic_ids"].astype(np.int64),
+            local_views=f["local_views"].astype(np.float32),
+            labels=f["labels"].astype(np.int8),
+            tic_ids=f["tic_ids"].astype(np.int64),
             aux_features=aux.astype(np.float32) if aux is not None else None,
         )
 
@@ -52,16 +52,19 @@ def load_views(path: Path) -> ViewArrays:
 def train_val_test_split(
     views: ViewArrays,
     train: float = 0.7,
-    val:   float = 0.15,
-    test:  float = 0.15,
-    seed:  int   = 42,
+    val: float = 0.15,
+    test: float = 0.15,
+    seed: int = 42,
 ) -> tuple[ViewArrays, ViewArrays, ViewArrays]:
     if abs(train + val + test - 1.0) > 1e-6:
         raise ValueError("train+val+test must sum to 1")
 
     idx = np.arange(len(views.labels))
     train_idx, rest_idx = train_test_split(
-        idx, test_size=(val + test), stratify=views.labels, random_state=seed,
+        idx,
+        test_size=(val + test),
+        stratify=views.labels,
+        random_state=seed,
     )
     val_idx, test_idx = train_test_split(
         rest_idx,
@@ -75,9 +78,9 @@ def train_val_test_split(
 def _slice(v: ViewArrays, idx: np.ndarray) -> ViewArrays:
     return ViewArrays(
         global_views=v.global_views[idx],
-        local_views =v.local_views[idx],
-        labels      =v.labels[idx],
-        tic_ids     =v.tic_ids[idx],
+        local_views=v.local_views[idx],
+        labels=v.labels[idx],
+        tic_ids=v.tic_ids[idx],
         aux_features=None if v.aux_features is None else v.aux_features[idx],
     )
 
@@ -112,9 +115,7 @@ class LightcurveDataset:
     def _shift_1d(x: tf.Tensor, max_frac: float) -> tf.Tensor:
         n = tf.shape(x)[-1]
         shift = tf.cast(
-            tf.random.uniform(
-                [], minval=-max_frac, maxval=max_frac
-            ) * tf.cast(n, tf.float32),
+            tf.random.uniform([], minval=-max_frac, maxval=max_frac) * tf.cast(n, tf.float32),
             tf.int32,
         )
         return tf.roll(x, shift=shift, axis=-1)
@@ -138,15 +139,13 @@ class LightcurveDataset:
 
     def to_tf_dataset(self) -> tf.data.Dataset:
         """Materialise as a `tf.data.Dataset` of (inputs_dict, label)."""
-        g = self.v.global_views[..., None]            # add channel axis
+        g = self.v.global_views[..., None]  # add channel axis
         l = self.v.local_views[..., None]
         y = self.v.labels.astype(np.float32)
 
         if self.use_aux:
-            aux = self.v.aux_features                 # type: ignore[union-attr]
-            ds = tf.data.Dataset.from_tensor_slices(
-                ((g, l, aux), y)
-            )
+            aux = self.v.aux_features
+            ds = tf.data.Dataset.from_tensor_slices(((g, l, aux), y))
         else:
             ds = tf.data.Dataset.from_tensor_slices(((g, l), y))
 
@@ -154,14 +153,16 @@ class LightcurveDataset:
             ds = ds.shuffle(buffer_size=min(1024, len(y)), seed=42)
 
         if self.augment:
-            def _aug(inputs, label):                  # type: ignore[no-untyped-def]
+
+            def _aug(inputs, label):  # type: ignore[no-untyped-def]
                 if self.use_aux:
                     g_, l_, a_ = inputs
-                    g_, l_, a_ = self._augment(g_, l_, aux=a_)
+                    g_, l_, a_ = self._augment(g_, l_, aux=a_)  # type: ignore[misc]
                     return (g_, l_, a_), label
                 g_, l_ = inputs
-                g_, l_ = self._augment(g_, l_)
+                g_, l_ = self._augment(g_, l_)  # type: ignore[misc]
                 return (g_, l_), label
+
             ds = ds.map(_aug, num_parallel_calls=tf.data.AUTOTUNE)
 
         # Convert tuple-inputs to dict-inputs for the Functional model.

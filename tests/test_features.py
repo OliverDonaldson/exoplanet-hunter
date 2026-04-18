@@ -18,8 +18,8 @@ def test_transit_has_higher_depth_than_quiet(
     synthetic_view: np.ndarray, synthetic_quiet_view: np.ndarray
 ) -> None:
     feats_transit = extract_features(synthetic_view)
-    feats_quiet   = extract_features(synthetic_quiet_view)
+    feats_quiet = extract_features(synthetic_quiet_view)
     depth_idx = FEATURE_NAMES.index("depth")
-    snr_idx   = FEATURE_NAMES.index("depth_snr")
+    snr_idx = FEATURE_NAMES.index("depth_snr")
     assert feats_transit[depth_idx] > feats_quiet[depth_idx]
-    assert feats_transit[snr_idx]   > feats_quiet[snr_idx]
+    assert feats_transit[snr_idx] > feats_quiet[snr_idx]

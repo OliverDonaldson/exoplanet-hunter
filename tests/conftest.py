@@ -43,13 +43,15 @@ def synthetic_views_dataset(
     g_views = []
     l_views = []
     labels: list[int] = []
-    for i in range(16):
+    for _i in range(16):
         v = synthetic_view + rng.normal(scale=0.005, size=synthetic_view.size).astype(np.float32)
         g_views.append(v)
         l_views.append(_local_window(v))
         labels.append(1)
-    for i in range(16):
-        v = synthetic_quiet_view + rng.normal(scale=0.005, size=synthetic_quiet_view.size).astype(np.float32)
+    for _i in range(16):
+        v = synthetic_quiet_view + rng.normal(scale=0.005, size=synthetic_quiet_view.size).astype(
+            np.float32
+        )
         g_views.append(v)
         l_views.append(_local_window(v))
         labels.append(0)

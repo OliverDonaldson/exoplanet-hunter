@@ -66,8 +66,8 @@ tune:  ## Optuna HP search for the dual-view CNN
 
 # --- Services -----------------------------------------------------------------
 
-mlflow:  ## Start a local MLflow tracking UI at :5000
-	mlflow ui --backend-store-uri ./mlruns --host 0.0.0.0 --port 5000
+mlflow:  ## Start a local MLflow tracking UI at http://localhost:5050
+	mlflow ui --backend-store-uri ./mlruns --host 127.0.0.1 --port 5050
 
 jupyter:  ## Start JupyterLab
 	jupyter lab --no-browser

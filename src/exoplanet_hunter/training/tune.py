@@ -67,6 +67,7 @@ def main(cfg: DictConfig) -> float:
         with mlflow.start_run(nested=True, run_name=f"trial-{trial.number}"):
             mlflow.log_params({f"trial.{k}": v for k, v in trial.params.items()})
             from exoplanet_hunter.training.train import main as train_main
+
             score = float(train_main(trial_cfg))
             mlflow.log_metric(str(cfg.train.optuna.metric), score)
             return score

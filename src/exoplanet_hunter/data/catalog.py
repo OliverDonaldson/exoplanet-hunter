@@ -63,15 +63,20 @@ def _query_confirmed_planets() -> pd.DataFrame:
     adql = (
         "select pl_name, tic_id, hostname, "
         "       pl_orbper, pl_tranmid, pl_trandep, pl_trandur, "
-        "       st_teff, st_rad, st_logg, st_tmag "
+        "       st_teff, st_rad, st_logg, sy_tmag "
         "from ps "
         "where tic_id is not null "
         "  and pl_trandep is not null "
         "  and pl_orbper is not null "
         "  and pl_tranmid is not null "
-        "  and (disc_facility like '%TESS%' or pl_facility like '%TESS%')"
+        "  and disc_facility like '%TESS%'"
     )
     df = _tap_query(adql)
+    # ps.tic_id comes back as e.g. "TIC 142937186"; normalise to bare integer
+    # so it lines up with toi.tid (already an int) for the later concat/dedupe.
+    df["tic_id"] = (
+        df["tic_id"].astype(str).str.replace("TIC ", "", regex=False).str.strip().astype("int64")
+    )
     df = df.drop_duplicates(subset="tic_id").reset_index(drop=True)
     df["disposition"] = "CP"
     df["label"] = 1
@@ -84,7 +89,7 @@ def _query_confirmed_planets() -> pd.DataFrame:
             "st_teff":     "teff",
             "st_rad":      "radius",
             "st_logg":     "logg",
-            "st_tmag":     "tmag",
+            "sy_tmag":     "tmag",
         }
     )
 

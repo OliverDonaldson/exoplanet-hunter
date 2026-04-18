@@ -40,11 +40,11 @@ select = [
 ]
 ignore = [
     "E501",     # line length handled by formatter
-    "PD901",    # `df` is a fine name for an example
+    "E741",     # `l` is conventional in this codebase for the local-view tensor (paired with `g`)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"notebooks/**" = ["E402", "F401"]
+"notebooks/**" = ["E402", "F401", "E702"]   # `;` to suppress matplotlib output is conventional
 "tests/**"     = ["B011"]
 
 [tool.ruff.format]

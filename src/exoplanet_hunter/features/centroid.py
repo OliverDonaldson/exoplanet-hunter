@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 def extract_centroid_features(
-    lc: "lk.LightCurve",
+    lc: lk.LightCurve,
     period: float,
     t0: float,
     duration: float,
@@ -40,23 +40,27 @@ def extract_centroid_features(
     cx_col = next((c for c in ("mom_centr1", "centroid_col") if c in lc.columns), None)
     cy_col = next((c for c in ("mom_centr2", "centroid_row") if c in lc.columns), None)
     if cx_col is None or cy_col is None:
-        return {"centroid_shift_x": float("nan"),
-                "centroid_shift_y": float("nan"),
-                "centroid_snr":     float("nan")}
+        return {
+            "centroid_shift_x": float("nan"),
+            "centroid_shift_y": float("nan"),
+            "centroid_snr": float("nan"),
+        }
 
     folded = lc.fold(period=period, epoch_time=t0)
-    phase  = np.asarray(folded.time.value, dtype=float)
-    cx     = np.asarray(folded[cx_col].value, dtype=float)
-    cy     = np.asarray(folded[cy_col].value, dtype=float)
+    phase = np.asarray(folded.time.value, dtype=float)
+    cx = np.asarray(folded[cx_col].value, dtype=float)
+    cy = np.asarray(folded[cy_col].value, dtype=float)
 
     half = (duration / period) / 2.0
-    in_transit  = (np.abs(phase) < half) & np.isfinite(cx) & np.isfinite(cy)
+    in_transit = (np.abs(phase) < half) & np.isfinite(cx) & np.isfinite(cy)
     out_transit = (np.abs(phase) > 3 * half) & np.isfinite(cx) & np.isfinite(cy)
 
     if not in_transit.any() or not out_transit.any():
-        return {"centroid_shift_x": float("nan"),
-                "centroid_shift_y": float("nan"),
-                "centroid_snr":     float("nan")}
+        return {
+            "centroid_shift_x": float("nan"),
+            "centroid_shift_y": float("nan"),
+            "centroid_snr": float("nan"),
+        }
 
     dx = float(np.median(cx[in_transit]) - np.median(cx[out_transit]))
     dy = float(np.median(cy[in_transit]) - np.median(cy[out_transit]))
@@ -64,5 +68,5 @@ def extract_centroid_features(
     return {
         "centroid_shift_x": dx,
         "centroid_shift_y": dy,
-        "centroid_snr":     (dx * dx + dy * dy) ** 0.5 / sigma,
+        "centroid_snr": (dx * dx + dy * dy) ** 0.5 / sigma,
     }
