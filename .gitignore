@@ -23,20 +23,17 @@ env/
 *.ipynb_meta
 
 # --- Data + artifacts (large, regeneratable) ---
-data/raw/
-data/interim/
-data/processed/
-!data/labels/.gitkeep
-!data/raw/.gitkeep
-!data/interim/.gitkeep
-!data/processed/.gitkeep
+# Everything under data/ is reproducible: labels.parquet from
+# catalog.py, views.npz from build_dataset.py, raw FITS from MAST.
+data/
 models/*.keras
 models/*.h5
 models/*.joblib
 results/
 mlruns/
 mlartifacts/
-outputs/                # Hydra default output dir
+# Hydra default output dir (per-run logs + resolved configs)
+outputs/
 multirun/
 
 # --- lightkurve cache (shared, big) ---
