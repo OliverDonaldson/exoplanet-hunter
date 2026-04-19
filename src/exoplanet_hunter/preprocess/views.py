@@ -38,13 +38,26 @@ def _normalise(view: np.ndarray) -> np.ndarray:
     Subtracting the median puts the baseline at 0; dividing by |min - median|
     rescales the deepest dip to -1, regardless of absolute transit depth.
     This makes the model see *transit shape*, not *transit magnitude*.
+
+    NaN handling: uses nan-aware median/min so that empty bins (NaN, from
+    long data gaps after fold-and-bin) don't poison the whole view. Any
+    remaining NaNs after normalisation are filled with 0 (the baseline) —
+    the model treats them as "no flux deviation here", which is the right
+    inductive bias for a missing observation.
+
+    Raises ValueError if the entire input is NaN — this signals a
+    fundamentally bad target that build_dataset.py should skip and count as
+    preprocess_error (rather than silently shipping an all-NaN row that
+    poisons gradients during training).
     """
-    med = float(np.median(view))
+    if not np.isfinite(view).any():
+        raise ValueError("view is entirely NaN — no usable cadences after folding")
+    med = float(np.nanmedian(view))
     centred = view - med
-    depth = float(np.abs(centred.min()))
+    depth = float(np.abs(np.nanmin(centred)))
     if depth < 1.0e-8:
-        return centred
-    return centred / depth
+        return np.nan_to_num(centred, nan=0.0)
+    return np.nan_to_num(centred / depth, nan=0.0)
 
 
 def build_views(
