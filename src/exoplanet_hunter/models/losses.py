@@ -12,11 +12,20 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 
 
-def binary_focal_loss(gamma: float = 2.0, alpha: float = 0.25) -> tf.types.experimental.Callable:
+def binary_focal_loss(gamma: float = 2.0, alpha: float = 0.75) -> tf.types.experimental.Callable:
     """Focal loss (Lin et al. 2017) for binary classification.
 
         L = -alpha       * (1 - p)^gamma * log(p)        if y == 1
             -(1 - alpha) * p^gamma       * log(1 - p)    if y == 0
+
+    α is the positive-class weight: with α > 0.5 the rare positive class
+    gets a larger gradient contribution. For exoplanet detection positives
+    are rare (~1:6), so the sensible default is α ≈ 0.75, *not* the 0.25
+    from the original object-detection paper (which assumed rare negatives).
+
+    Never combine this with a second `class_weight` on model.fit — the
+    caller must choose one or the other, else the minority class gets
+    double-weighted.
     """
 
     def loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:

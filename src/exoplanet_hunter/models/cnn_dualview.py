@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 import tensorflow as tf
-from tensorflow.keras import Model, layers
+from tensorflow.keras import Model, layers, regularizers
 
 
 def _conv_tower(
@@ -34,19 +34,34 @@ def _conv_tower(
     kernel_size: int,
     pool_size: int,
     name: str,
+    *,
+    use_batchnorm: bool = True,
+    spatial_dropout: float = 0.0,
+    l2: float = 0.0,
 ) -> tf.Tensor:
-    """Sequence of (Conv1D, ReLU)*conv_per_block + MaxPool1D blocks."""
+    """Sequence of (Conv1D, BN, ReLU)*conv_per_block + MaxPool1D blocks."""
+    reg = regularizers.l2(l2) if l2 > 0 else None
     for block_idx, n_filters in enumerate(filters_per_block):
         for conv_idx in range(conv_per_block):
             x = layers.Conv1D(
                 filters=n_filters,
                 kernel_size=kernel_size,
                 padding="same",
-                activation="relu",
+                activation=None,
+                kernel_regularizer=reg,
                 name=f"{name}_b{block_idx}_c{conv_idx}",
             )(x)
+            if use_batchnorm:
+                x = layers.BatchNormalization(
+                    name=f"{name}_b{block_idx}_bn{conv_idx}",
+                )(x)
+            x = layers.Activation("relu", name=f"{name}_b{block_idx}_act{conv_idx}")(x)
         x = layers.MaxPool1D(pool_size=pool_size, name=f"{name}_b{block_idx}_pool")(x)
-    return layers.Flatten(name=f"{name}_flatten")(x)
+        if spatial_dropout > 0:
+            x = layers.SpatialDropout1D(
+                spatial_dropout, name=f"{name}_b{block_idx}_sdrop",
+            )(x)
+    return layers.GlobalAveragePooling1D(name=f"{name}_gap")(x)
 
 
 def build_cnn_dualview(
@@ -70,6 +85,10 @@ def build_cnn_dualview(
     g_in = layers.Input(shape=(global_input_length, 1), name="global_view")
     l_in = layers.Input(shape=(local_input_length,  1), name="local_view")
 
+    use_bn = bool(getattr(model_cfg, "use_batchnorm", True))
+    sdrop = float(getattr(model_cfg, "spatial_dropout", 0.0))
+    l2_val = float(getattr(model_cfg, "l2", 0.0))
+
     g = _conv_tower(
         g_in,
         filters_per_block=list(model_cfg.global_view.conv_blocks),
@@ -77,6 +96,9 @@ def build_cnn_dualview(
         kernel_size=int(model_cfg.global_view.kernel_size),
         pool_size=int(model_cfg.global_view.pool_size),
         name="global",
+        use_batchnorm=use_bn,
+        spatial_dropout=sdrop,
+        l2=l2_val,
     )
     l = _conv_tower(
         l_in,
@@ -85,6 +107,9 @@ def build_cnn_dualview(
         kernel_size=int(model_cfg.local_view.kernel_size),
         pool_size=int(model_cfg.local_view.pool_size),
         name="local",
+        use_batchnorm=use_bn,
+        spatial_dropout=sdrop,
+        l2=l2_val,
     )
 
     inputs: list[tf.Tensor] = [g_in, l_in]
@@ -101,8 +126,15 @@ def build_cnn_dualview(
     # FC head with always-on dropout (training=True) so we can do MC Dropout
     # at inference. We pass `training=True` explicitly inside a small Lambda
     # to keep stochasticity at predict-time.
+    fc_l2 = regularizers.l2(l2_val) if l2_val > 0 else None
     for i, units in enumerate(model_cfg.head.fc_units):
-        x = layers.Dense(int(units), activation="relu", name=f"fc_{i}")(x)
+        x = layers.Dense(
+            int(units), activation="relu",
+            kernel_regularizer=fc_l2,
+            name=f"fc_{i}",
+        )(x)
+        if use_bn:
+            x = layers.BatchNormalization(name=f"fc_bn_{i}")(x)
         x = layers.Dropout(float(model_cfg.head.dropout), name=f"drop_{i}")(x, training=None)
 
     output = layers.Dense(

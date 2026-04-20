@@ -28,6 +28,7 @@ n_mc: 50             # MC-Dropout forward passes
 paths:
   root:           ${oc.env:PROJECT_ROOT,${hydra:runtime.cwd}}
   data_raw:       ${paths.root}/data/raw
+  data_raw_kepler: ${oc.env:KEPLER_RAW_DIR,${paths.root}/data/raw_kepler}
   data_interim:   ${paths.root}/data/interim
   data_processed: ${paths.root}/data/processed
   data_labels:    ${paths.root}/data/labels

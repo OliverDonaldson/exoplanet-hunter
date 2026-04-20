@@ -240,6 +240,8 @@ def _train_keras(
         time_shift_frac=float(cfg.preprocess.augmentation.time_shift_frac),
         noise_std=float(cfg.preprocess.augmentation.noise_std),
         flip_prob=float(cfg.preprocess.augmentation.flip_prob),
+        scale_range=float(cfg.preprocess.augmentation.get("scale_range", 0.0)),
+        mask_prob=float(cfg.preprocess.augmentation.get("mask_prob", 0.0)),
         use_aux=use_aux,
         seed=int(cfg.seed),
     ).to_tf_dataset()
@@ -261,8 +263,17 @@ def _train_keras(
     ).to_tf_dataset()
 
     # Class weights from training labels (auto by default).
+    # Focal loss already rebalances via alpha; stacking sklearn class_weight on
+    # top double-counts the minority class and can push the model into a
+    # pathological regime. Skip class_weight whenever focal loss is active.
     class_weight = None
-    if str(cfg.train.class_weight) == "auto":
+    if cfg.train.loss.type == "focal":
+        log.info(
+            "[train-cnn] focal loss active — skipping class_weight "
+            "(rebalancing via focal alpha=%.3f instead)",
+            float(cfg.train.loss.focal_alpha),
+        )
+    elif str(cfg.train.class_weight) == "auto":
         from sklearn.utils.class_weight import compute_class_weight
 
         classes = np.array([0, 1])

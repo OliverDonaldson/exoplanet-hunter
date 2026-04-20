@@ -21,6 +21,7 @@ import sys
 
 import hydra
 import numpy as np
+import pandas as pd
 from omegaconf import DictConfig
 from tqdm.auto import tqdm
 
@@ -44,20 +45,31 @@ def main(cfg: DictConfig) -> None:
             n_confirmed=int(cfg.data.n_confirmed),
             n_false_pos=int(cfg.data.n_false_pos),
             n_quiet=int(cfg.data.n_quiet),
+            n_confirmed_kepler=int(cfg.data.get("n_confirmed_kepler", 0)),
+            n_false_pos_kepler=int(cfg.data.get("n_false_pos_kepler", 0)),
             seed=int(cfg.data.seed),
         ),
         out_dir=paths.data_labels,
     )
 
+    # Ensure every row has a mission column (backward compat with old catalogs).
+    if "mission" not in catalog.columns:
+        catalog["mission"] = "TESS"
+
     # --- Stage 2 — download light curves -------------------------------
+    kepler_dir = paths.data_raw_kepler if paths.data_raw_kepler != paths.data_raw else None
     downloader = LightCurveDownloader(
         cache_dir=paths.data_raw,
+        kepler_cache_dir=kepler_dir,
         author=str(cfg.data.author),
         cadence=int(cfg.data.cadence) if cfg.data.cadence else None,
     )
-    results = downloader.download_many(catalog["tic_id"].tolist())
-    success_tics = {r.tic_id for r in results if r.success}
-    log.info("[build] %d/%d TICs downloaded successfully", len(success_tics), len(catalog))
+    results = downloader.download_many(
+        catalog["tic_id"].tolist(),
+        missions=catalog["mission"].tolist(),
+    )
+    success_ids = {(r.mission, r.target_id) for r in results if r.success}
+    log.info("[build] %d/%d targets downloaded successfully", len(success_ids), len(catalog))
 
     # --- Stage 3 — preprocess into views -------------------------------
     import lightkurve as lk
@@ -79,7 +91,8 @@ def main(cfg: DictConfig) -> None:
 
     for _, row in tqdm(catalog.iterrows(), total=len(catalog), desc="processing"):
         tic = int(row["tic_id"])
-        if tic not in success_tics:
+        mission = row.get("mission", "TESS")
+        if (mission, tic) not in success_ids:
             skips["no_download"] += 1
             continue
         period = row.get("period")
@@ -96,17 +109,26 @@ def main(cfg: DictConfig) -> None:
             skips["missing_ephemeris"] += 1
             continue
 
-        path = paths.data_raw / f"tic_{tic}.fits"
+        # Resolve the FITS path based on mission.
+        if mission == "Kepler":
+            path = (kepler_dir or paths.data_raw) / f"kic_{tic}.fits"
+        else:
+            path = paths.data_raw / f"tic_{tic}.fits"
         if not path.exists():
             skips["missing_fits"] += 1
             continue
         try:
             lc = lk.read(str(path))
             lc = clean_lightcurve(lc, sigma_clip=float(cfg.preprocess.cleaning.sigma_clip))
+            # Ephemeris is known from the catalog row; mask transits when
+            # fitting the flattening spline so the dip itself survives.
             lc = flatten_lightcurve(
                 lc,
                 window_length=int(cfg.preprocess.flatten.window_length),
                 polyorder=int(cfg.preprocess.flatten.polyorder),
+                period=float(period),
+                t0=float(t0),
+                duration=float(duration),
             )
             views = build_views(
                 lc,
@@ -123,15 +145,28 @@ def main(cfg: DictConfig) -> None:
             continue
 
         # Stellar features (best-effort; NaN if unavailable).
-        sp = fetch_stellar_params(tic)
-        aux.append(
-            [
-                sp.teff if sp.teff is not None else np.nan,
-                sp.radius if sp.radius is not None else np.nan,
-                sp.logg if sp.logg is not None else np.nan,
-                sp.tmag if sp.tmag is not None else np.nan,
-            ]
-        )
+        # For Kepler targets, stellar params come from the KOI catalog row
+        # itself (already in teff/radius/logg/tmag columns), so we prefer
+        # those over a TIC lookup that would fail for KIC IDs.
+        if mission == "Kepler":
+            aux.append(
+                [
+                    float(row["teff"]) if pd.notna(row.get("teff")) else np.nan,
+                    float(row["radius"]) if pd.notna(row.get("radius")) else np.nan,
+                    float(row["logg"]) if pd.notna(row.get("logg")) else np.nan,
+                    float(row["tmag"]) if pd.notna(row.get("tmag")) else np.nan,
+                ]
+            )
+        else:
+            sp = fetch_stellar_params(tic)
+            aux.append(
+                [
+                    sp.teff if sp.teff is not None else np.nan,
+                    sp.radius if sp.radius is not None else np.nan,
+                    sp.logg if sp.logg is not None else np.nan,
+                    sp.tmag if sp.tmag is not None else np.nan,
+                ]
+            )
         g_views.append(views.global_view)
         l_views.append(views.local_view)
         labels.append(int(row["label"]))

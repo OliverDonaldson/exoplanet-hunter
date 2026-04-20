@@ -41,12 +41,21 @@ DISPOSITION_LABELS: dict[str, int] = {
     "PC": -1,   # planet candidate — held out for inference
 }
 
+# Kepler KOI dispositions use different strings.
+KEPLER_DISPOSITION_LABELS: dict[str, int] = {
+    "CONFIRMED":      1,
+    "FALSE POSITIVE": 0,
+    "CANDIDATE":     -1,
+}
+
 
 @dataclass(frozen=True)
 class CatalogRequest:
     n_confirmed: int
     n_false_pos: int
     n_quiet: int
+    n_confirmed_kepler: int = 0
+    n_false_pos_kepler: int = 0
     seed: int = 42
 
 
@@ -80,6 +89,7 @@ def _query_confirmed_planets() -> pd.DataFrame:
     df = df.drop_duplicates(subset="tic_id").reset_index(drop=True)
     df["disposition"] = "CP"
     df["label"] = 1
+    df["mission"] = "TESS"
     return df.rename(
         columns={
             "pl_orbper":   "period",
@@ -118,6 +128,41 @@ def _query_toi() -> pd.DataFrame:
     df["label"] = df["disposition"].map(DISPOSITION_LABELS)
     df = df.dropna(subset=["label"])
     df["label"] = df["label"].astype(int)
+    df["mission"] = "TESS"
+    return df.drop_duplicates(subset="tic_id").reset_index(drop=True)
+
+
+def _query_koi() -> pd.DataFrame:
+    """Kepler Objects of Interest from the ``cumulative`` archive table.
+
+    Unit normalisation (matches the TESS path):
+      * ``koi_time0bk`` is BKJD (BJD − 2454833). Downstream code uses
+        (t − t0) mod period, so the absolute epoch offset cancels.
+      * ``koi_duration`` is **hours** → converted to days.
+      * ``koi_depth`` is **ppm** → converted to fractional depth.
+    """
+    adql = (
+        "select kepoi_name as name, "
+        "       kepid as target_id, "
+        "       koi_period as period, "
+        "       koi_time0bk as t0, "
+        "       koi_depth / 1.0e6 as depth, "
+        "       koi_duration / 24.0 as duration, "
+        "       koi_disposition as disposition, "
+        "       koi_steff as teff, koi_srad as radius, "
+        "       koi_slogg as logg, koi_kepmag as tmag "
+        "from cumulative "
+        "where koi_disposition is not null "
+        "  and koi_period is not null "
+        "  and koi_time0bk is not null"
+    )
+    df = _tap_query(adql)
+    df["label"] = df["disposition"].map(KEPLER_DISPOSITION_LABELS)
+    df = df.dropna(subset=["label"])
+    df["label"] = df["label"].astype(int)
+    df["mission"] = "Kepler"
+    # Rename target_id → tic_id for schema compatibility (it's actually a KIC ID).
+    df = df.rename(columns={"target_id": "tic_id"})
     return df.drop_duplicates(subset="tic_id").reset_index(drop=True)
 
 
@@ -166,10 +211,36 @@ def build_label_catalog(req: CatalogRequest, out_dir: Path) -> pd.DataFrame:
     quiet = pd.DataFrame({"tic_id": rng.head(req.n_quiet).astype("int64")})
     quiet["label"] = 0
     quiet["disposition"] = "QUIET"
+    quiet["mission"] = "TESS"
     for col in ("period", "t0", "depth", "duration", "teff", "radius", "logg", "tmag"):
         quiet[col] = pd.NA
 
-    catalog = pd.concat([pos, neg, quiet], ignore_index=True)
+    parts = [pos, neg, quiet]
+
+    # --- Kepler / KOI targets (optional) --------------------------------
+    if req.n_confirmed_kepler > 0 or req.n_false_pos_kepler > 0:
+        koi = _query_koi()
+        koi_pos = koi[koi["label"] == 1]
+        koi_neg = koi[koi["label"] == 0]
+        koi_pc  = koi[koi["label"] == -1]
+
+        log.info(
+            "[catalog] KOI sources: confirmed=%d, FP=%d, PC=%d",
+            len(koi_pos), len(koi_neg), len(koi_pc),
+        )
+
+        koi_pos = koi_pos.sample(
+            min(req.n_confirmed_kepler, len(koi_pos)), random_state=req.seed,
+        )
+        koi_neg = koi_neg.sample(
+            min(req.n_false_pos_kepler, len(koi_neg)), random_state=req.seed,
+        )
+        parts.extend([koi_pos, koi_neg])
+
+        # Persist Kepler held-out candidates alongside TESS candidates.
+        pc = pd.concat([pc, koi_pc], ignore_index=True)
+
+    catalog = pd.concat(parts, ignore_index=True)
     catalog["tic_id"] = catalog["tic_id"].astype("int64")
 
     out_path = out_dir / "labels.parquet"

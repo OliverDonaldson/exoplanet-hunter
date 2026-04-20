@@ -20,6 +20,7 @@ import optuna
 from omegaconf import DictConfig, OmegaConf
 
 from exoplanet_hunter.training.mlflow_utils import setup_mlflow
+from exoplanet_hunter.training.train import run as train_run
 from exoplanet_hunter.utils import get_logger, set_global_seed
 
 log = get_logger(__name__)
@@ -66,9 +67,9 @@ def main(cfg: DictConfig) -> float:
         log.info("[tune] trial %d → %s", trial.number, trial.params)
         with mlflow.start_run(nested=True, run_name=f"trial-{trial.number}"):
             mlflow.log_params({f"trial.{k}": v for k, v in trial.params.items()})
-            from exoplanet_hunter.training.train import main as train_main
-
-            score = float(train_main(trial_cfg))
+            # Call the non-@hydra.main `run` so trials don't re-parse sys.argv
+            # or create nested hydra output directories per trial.
+            score = float(train_run(trial_cfg))
             mlflow.log_metric(str(cfg.train.optuna.metric), score)
             return score
 

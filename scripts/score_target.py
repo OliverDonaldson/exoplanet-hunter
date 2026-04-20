@@ -58,18 +58,21 @@ def main(cfg: DictConfig) -> None:
         log.error("[score] no SPOC light curve for TIC %d (%s)", tic_id, res.reason)
         sys.exit(1)
 
-    lc = lk.read(str(res.path))
-    lc = clean_lightcurve(lc, sigma_clip=float(cfg.preprocess.cleaning.sigma_clip))
-    lc = flatten_lightcurve(
-        lc,
-        window_length=int(cfg.preprocess.flatten.window_length),
-        polyorder=int(cfg.preprocess.flatten.polyorder),
-    )
+    raw = lk.read(str(res.path))
+    cleaned = clean_lightcurve(raw, sigma_clip=float(cfg.preprocess.cleaning.sigma_clip))
 
     # --- Period search if needed ---------------------------------------
+    # BLS needs a detrended LC but we don't yet know the ephemeris, so we
+    # do an initial *unmasked* flatten just for the period search, then
+    # re-flatten with a transit mask once the ephemeris is known.
     if period is None or t0 is None or duration_h is None:
+        lc_for_bls = flatten_lightcurve(
+            cleaned,
+            window_length=int(cfg.preprocess.flatten.window_length),
+            polyorder=int(cfg.preprocess.flatten.polyorder),
+        )
         log.info("[score] running BLS period search ...")
-        bls = bls_period_search(lc)
+        bls = bls_period_search(lc_for_bls)
         period = float(bls.period)
         t0 = float(bls.t0)
         duration = float(bls.duration)
@@ -84,6 +87,17 @@ def main(cfg: DictConfig) -> None:
         period = float(period)
         t0 = float(t0)
         duration = float(duration_h) / 24.0
+
+    # Now re-flatten with the transit mask so the spline does not absorb
+    # the dip. Views are always built from this mask-flattened LC.
+    lc = flatten_lightcurve(
+        cleaned,
+        window_length=int(cfg.preprocess.flatten.window_length),
+        polyorder=int(cfg.preprocess.flatten.polyorder),
+        period=period,
+        t0=t0,
+        duration=duration,
+    )
 
     views = build_views(
         lc,

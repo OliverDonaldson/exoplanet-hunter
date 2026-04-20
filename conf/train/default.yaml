@@ -1,20 +1,23 @@
 name: default
 
-batch_size: 64
-epochs: 100
+batch_size: 32
+epochs: 200
 shuffle_buffer: 1024
 prefetch: AUTOTUNE
 
 optimizer:
   _target_: tensorflow.keras.optimizers.Adam
-  learning_rate: 1.0e-3
+  learning_rate: 5.0e-4
 
 loss:
-  type: binary_crossentropy   # alternative: focal
+  type: binary_crossentropy
   focal_gamma: 2.0
-  focal_alpha: 0.25
+  focal_alpha: 0.75
 
-class_weight: auto            # Compute from training set; null = uniform.
+# Compute from training set; null = uniform. Ignored when loss.type is
+# "focal" — focal loss already rebalances via α, so applying sklearn
+# class weights on top would double-count the minority class.
+class_weight: auto
 
 metrics:
   - accuracy
@@ -26,7 +29,7 @@ callbacks:
   early_stopping:
     monitor: val_auc
     mode: max
-    patience: 12
+    patience: 25
     restore_best_weights: true
   model_checkpoint:
     monitor: val_auc
@@ -36,5 +39,5 @@ callbacks:
     monitor: val_loss
     mode: min
     factor: 0.5
-    patience: 4
+    patience: 8
     min_lr: 1.0e-6

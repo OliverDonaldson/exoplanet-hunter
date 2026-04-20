@@ -52,10 +52,10 @@ def fold_and_bin(
         if sel.size > 0:
             binned[b] = np.median(sel)
 
-    # Linear interpolate over empty bins to keep the array dense.
-    if np.isnan(binned).any():
-        valid = ~np.isnan(binned)
-        if valid.any():
-            binned = np.interp(centers, centers[valid], binned[valid])
+    # Leave empty bins as NaN rather than interpolating.
+    # np.interp would manufacture smooth signal across data gaps,
+    # making a transit that falls inside a gap invisible.  The
+    # downstream _normalise() fills NaN → 0 (baseline), which is
+    # the correct inductive bias for a missing observation.
 
     return centers, binned
