@@ -304,16 +304,50 @@ def _train_keras(
         # Evaluate on test.
         test_score = model.predict(test_ds).squeeze()
         test_y = test_v.labels.astype(int)
+
+        # --- Optimal threshold sweep on validation set -------------------
+        # Default 0.5 is rarely optimal (Paper 1 finds T≈0.2 is best).
+        # Sweep on val, find the threshold that maximises F1.
+        from sklearn.metrics import f1_score
+
+        val_score = model.predict(val_ds).squeeze()
+        val_y = val_v.labels.astype(int)
+        thresholds = np.arange(0.05, 0.96, 0.01)
+        f1s = [f1_score(val_y, (val_score >= t).astype(int), zero_division=0) for t in thresholds]
+        best_threshold = float(thresholds[int(np.argmax(f1s))])
+        mlflow.log_metric("best_threshold", best_threshold)
+        log.info("[train-cnn] optimal threshold (val F1): %.2f", best_threshold)
+
+        # --- Isotonic regression calibration (Paper 2) -------------------
+        # Adjust predicted probabilities so they reflect true likelihoods.
+        from sklearn.isotonic import IsotonicRegression
+
+        ir = IsotonicRegression(out_of_bounds="clip")
+        ir.fit(val_score, val_y)
+        test_score_cal = ir.predict(test_score)
+        val_brier = float(np.mean((val_score - val_y) ** 2))
+        cal_brier = float(np.mean((test_score_cal - test_y) ** 2))
+        mlflow.log_metric("val_brier_uncalibrated", val_brier)
+        mlflow.log_metric("test_brier_calibrated", cal_brier)
+        log.info("[train-cnn] Brier score — uncal=%.4f  calibrated=%.4f", val_brier, cal_brier)
+
+        # Save calibrator alongside model so score_target.py can load it.
+        import joblib
+
+        cal_path = paths.models / "cnn_calibrator.joblib"
+        joblib.dump({"calibrator": ir, "threshold": best_threshold}, cal_path)
+        mlflow.log_artifact(str(cal_path))
+
         log_classification_artifacts(
             test_y,
-            test_score,
-            threshold=0.5,
+            test_score_cal,
+            threshold=best_threshold,
             out_dir=paths.results / "cnn",
         )
 
         # Log final model.
         mlflow.log_artifact(str(ckpt_path))
-        return float(roc_auc_score(test_y, test_score))
+        return float(roc_auc_score(test_y, test_score_cal))
 
 
 if __name__ == "__main__":

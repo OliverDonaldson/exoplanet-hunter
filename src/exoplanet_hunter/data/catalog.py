@@ -68,10 +68,18 @@ def _tap_query(adql: str, fmt: str = "csv") -> pd.DataFrame:
 
 
 def _query_confirmed_planets() -> pd.DataFrame:
-    """Confirmed planets observed by TESS, with transit parameters."""
+    """Confirmed planets observed by TESS, with transit parameters.
+
+    ``pl_tranmid`` is stored in the archive as full BJD (~2,458,000+), but
+    TESS light curves use BTJD = BJD − 2457000. We subtract the offset at
+    query time so downstream phase-folding works: a finite-precision period
+    accumulates many days of error across ~700k cycles, so keeping the
+    (t − t0) magnitude small is essential, not cosmetic.
+    """
     adql = (
         "select pl_name, tic_id, hostname, "
-        "       pl_orbper, pl_tranmid, pl_trandep, pl_trandur, "
+        "       pl_orbper, pl_tranmid - 2457000.0 as pl_tranmid, "
+        "       pl_trandep, pl_trandur, "
         "       st_teff, st_rad, st_logg, sy_tmag "
         "from ps "
         "where tic_id is not null "
@@ -111,10 +119,14 @@ def _query_toi() -> pd.DataFrame:
     `_query_confirmed_planets`) is in **days**. We convert to days here so
     the combined catalogue has consistent units throughout — downstream
     code (build_dataset.py, score_target.py, build_views) all expect days.
+
+    ``pl_tranmid`` from the TOI table is full BJD (~2,458,000+). TESS light
+    curves use BTJD = BJD − 2457000, so we subtract the offset at query time
+    (same as ``_query_confirmed_planets``).
     """
     adql = (
         "select toi, tid as tic_id, "
-        "       pl_orbper as period, pl_tranmid as t0, "
+        "       pl_orbper as period, pl_tranmid - 2457000.0 as t0, "
         "       pl_trandep as depth, pl_trandurh / 24.0 as duration, "
         "       tfopwg_disp as disposition, "
         "       st_teff as teff, st_rad as radius, "
@@ -148,6 +160,7 @@ def _query_koi() -> pd.DataFrame:
         "       koi_time0bk as t0, "
         "       koi_depth / 1.0e6 as depth, "
         "       koi_duration / 24.0 as duration, "
+        "       koi_model_snr as snr, "
         "       koi_disposition as disposition, "
         "       koi_steff as teff, koi_srad as radius, "
         "       koi_slogg as logg, koi_kepmag as tmag "
@@ -177,7 +190,7 @@ def build_label_catalog(req: CatalogRequest, out_dir: Path) -> pd.DataFrame:
     Returns
     -------
     The combined dataframe with one row per TIC and columns
-    `tic_id, period, t0, depth, duration, disposition, label, teff, radius, logg, tmag`.
+    `tic_id, period, t0, depth, duration, snr, disposition, label, teff, radius, logg, tmag`.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = pd.Series(range(10_000_000)).sample(frac=1.0, random_state=req.seed)
@@ -212,7 +225,7 @@ def build_label_catalog(req: CatalogRequest, out_dir: Path) -> pd.DataFrame:
     quiet["label"] = 0
     quiet["disposition"] = "QUIET"
     quiet["mission"] = "TESS"
-    for col in ("period", "t0", "depth", "duration", "teff", "radius", "logg", "tmag"):
+    for col in ("period", "t0", "depth", "duration", "snr", "teff", "radius", "logg", "tmag"):
         quiet[col] = pd.NA
 
     parts = [pos, neg, quiet]
