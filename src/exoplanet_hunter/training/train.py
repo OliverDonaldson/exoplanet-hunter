@@ -202,6 +202,30 @@ def _train_keras(
         train_v.aux_features.shape[1] if use_aux and train_v.aux_features is not None else None
     )
 
+    # Impute NaN aux features with per-column medians from the training set.
+    # This is essential: TESS targets have no SNR, many targets missing stellar
+    # params — NaNs propagate through dense layers and make loss = nan.
+    if use_aux and aux_dim is not None:
+        import numpy as np
+
+        assert train_v.aux_features is not None
+        assert val_v.aux_features is not None
+        assert test_v.aux_features is not None
+        col_medians: np.ndarray = np.asarray(np.nanmedian(train_v.aux_features, axis=0))
+        col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
+
+        def _impute(arr: np.ndarray) -> np.ndarray:
+            out = arr.copy()
+            for j in range(out.shape[1]):
+                mask = np.isnan(out[:, j])
+                out[mask, j] = col_medians[j]
+            return out
+
+        train_v.aux_features = _impute(train_v.aux_features)
+        val_v.aux_features = _impute(val_v.aux_features)
+        test_v.aux_features = _impute(test_v.aux_features)
+        log.info("[train-cnn] aux NaN imputed with train medians: %s", col_medians.tolist())
+
     model = build_cnn_dualview(
         cfg.model,
         global_input_length=train_v.global_views.shape[1],
