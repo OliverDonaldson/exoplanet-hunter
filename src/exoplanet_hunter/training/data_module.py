@@ -105,7 +105,6 @@ class LightcurveDataset:
         augment: bool = False,
         time_shift_frac: float = 0.005,
         noise_std: float = 1e-4,
-        flip_prob: float = 0.5,
         scale_range: float = 0.05,
         mask_prob: float = 0.05,
         use_aux: bool = False,
@@ -117,7 +116,6 @@ class LightcurveDataset:
         self.augment = augment
         self.time_shift_frac = time_shift_frac
         self.noise_std = noise_std
-        self.flip_prob = flip_prob
         self.scale_range = scale_range
         self.mask_prob = mask_prob
         self.use_aux = use_aux and views.aux_features is not None
@@ -173,10 +171,6 @@ class LightcurveDataset:
             )
             g = g * g_mask
             l = l * l_mask
-        # Flip (transit is symmetric in time) — same decision for both views
-        do_flip = tf.random.uniform([]) < self.flip_prob
-        g = tf.cond(do_flip, lambda: tf.reverse(g, axis=[-1]), lambda: g)
-        l = tf.cond(do_flip, lambda: tf.reverse(l, axis=[-1]), lambda: l)
         return (g, l, aux) if aux is not None else (g, l)
 
     # ----------------------------------------------------------------- public

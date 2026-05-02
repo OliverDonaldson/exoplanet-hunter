@@ -11,10 +11,6 @@ Two sources, both queried via the public TAP service:
         FP, FA            -> 0   (false positive / false alarm — negative)
         PC                -> -1  (unconfirmed candidate — held out, used for inference)
         APC, anything else -> dropped
-
-A separate "quiet" catalogue of TICs with no flagged signal is sampled from
-random TIC IDs and verified against the TOI list — this gives the model
-genuine non-transit examples (it should learn that "no dip" → not a planet).
 """
 
 from __future__ import annotations
@@ -53,7 +49,6 @@ KEPLER_DISPOSITION_LABELS: dict[str, int] = {
 class CatalogRequest:
     n_confirmed: int
     n_false_pos: int
-    n_quiet: int
     n_confirmed_kepler: int = 0
     n_false_pos_kepler: int = 0
     seed: int = 42
@@ -193,7 +188,6 @@ def build_label_catalog(req: CatalogRequest, out_dir: Path) -> pd.DataFrame:
     `tic_id, period, t0, depth, duration, snr, disposition, label, teff, radius, logg, tmag`.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    rng = pd.Series(range(10_000_000)).sample(frac=1.0, random_state=req.seed)
 
     confirmed = _query_confirmed_planets()
     toi       = _query_toi()
@@ -218,17 +212,7 @@ def build_label_catalog(req: CatalogRequest, out_dir: Path) -> pd.DataFrame:
     pos = pos.sample(min(req.n_confirmed, len(pos)), random_state=req.seed)
     neg = neg.sample(min(req.n_false_pos, len(neg)), random_state=req.seed)
 
-    # "Quiet" stars — sampled but reserved for after the planet/FP set is built;
-    # in practice we draw them lazily from random TIC IDs in the downloader,
-    # because verifying "no signal" requires the actual light curve.
-    quiet = pd.DataFrame({"tic_id": rng.head(req.n_quiet).astype("int64")})
-    quiet["label"] = 0
-    quiet["disposition"] = "QUIET"
-    quiet["mission"] = "TESS"
-    for col in ("period", "t0", "depth", "duration", "snr", "teff", "radius", "logg", "tmag"):
-        quiet[col] = pd.NA
-
-    parts = [pos, neg, quiet]
+    parts = [pos, neg]
 
     # --- Kepler / KOI targets (optional) --------------------------------
     if req.n_confirmed_kepler > 0 or req.n_false_pos_kepler > 0:
@@ -261,10 +245,9 @@ def build_label_catalog(req: CatalogRequest, out_dir: Path) -> pd.DataFrame:
 
     log.info("[catalog] wrote %d rows → %s", len(catalog), out_path)
     log.info(
-        "[catalog]   pos=%d  neg=%d  quiet=%d  candidates(held-out)=%d",
+        "[catalog]   pos=%d  neg=%d  candidates(held-out)=%d",
         (catalog["label"] == 1).sum(),
-        ((catalog["label"] == 0) & (catalog["disposition"] != "QUIET")).sum(),
-        (catalog["disposition"] == "QUIET").sum(),
+        (catalog["label"] == 0).sum(),
         len(pc),
     )
 

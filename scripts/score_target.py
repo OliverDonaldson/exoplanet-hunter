@@ -25,6 +25,7 @@ import numpy as np
 from omegaconf import DictConfig
 
 from exoplanet_hunter.data.download import LightCurveDownloader
+from exoplanet_hunter.data.stellar import fetch_stellar_params
 from exoplanet_hunter.preprocess import build_views, clean_lightcurve, flatten_lightcurve
 from exoplanet_hunter.search import bls_period_search
 from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
@@ -111,6 +112,7 @@ def main(cfg: DictConfig) -> None:
 
     # --- Score ----------------------------------------------------------
     if model_type == "cnn":
+        import joblib
         import tensorflow as tf
 
         from exoplanet_hunter.models.uncertainty import mc_dropout_predict
@@ -121,17 +123,49 @@ def main(cfg: DictConfig) -> None:
             sys.exit(1)
         model = tf.keras.models.load_model(str(ckpt), compile=False)
 
-        inputs = {
+        # Load the calibration / aux-pipeline bundle saved at training time.
+        cal_path = paths.models / "cnn_calibrator.joblib"
+        bundle = joblib.load(cal_path) if cal_path.exists() else {}
+        calibrator = bundle.get("calibrator")
+        threshold = float(bundle.get("threshold", 0.5))
+        aux_pipeline = bundle.get("aux_pipeline")
+
+        inputs: dict[str, np.ndarray] = {
             "global_view": views.global_view[None, :, None].astype(np.float32),
             "local_view": views.local_view[None, :, None].astype(np.float32),
         }
+        # Build the 8-dim aux vector exactly the way preprocess_only.py does:
+        # [teff, radius, logg, tmag, depth, duration, log_period, snr].
+        if aux_pipeline is not None:
+            sp = fetch_stellar_params(tic_id)
+            aux_raw = np.array(
+                [
+                    [
+                        sp.teff if sp.teff is not None else np.nan,
+                        sp.radius if sp.radius is not None else np.nan,
+                        sp.logg if sp.logg is not None else np.nan,
+                        sp.tmag if sp.tmag is not None else np.nan,
+                        np.nan,  # depth — not known at inference unless user supplies it
+                        float(duration),
+                        float(np.log(period)) if period > 0 else np.nan,
+                        np.nan,  # snr — not available for ad-hoc TESS targets
+                    ]
+                ],
+                dtype=np.float32,
+            )
+            inputs["aux_features"] = aux_pipeline.transform(aux_raw).astype(np.float32)
+
         result = mc_dropout_predict(model, inputs, n_samples=n_mc)
+        prob = float(result.mean)
+        prob_cal = float(calibrator.predict([prob])[0]) if calibrator is not None else prob
         log.info(
-            "[score] TIC %d  P=%.4f d  →  prob = %.3f ± %.3f  (MC dropout n=%d)",
+            "[score] TIC %d  P=%.4f d  →  prob = %.3f ± %.3f  (calibrated=%.3f, threshold=%.2f, MC n=%d)",
             tic_id,
             period,
-            float(result.mean),
+            prob,
             float(result.std),
+            prob_cal,
+            threshold,
             n_mc,
         )
     elif model_type == "rf":

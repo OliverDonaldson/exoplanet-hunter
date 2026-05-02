@@ -4,7 +4,6 @@ name: default
 # How many targets per disposition class to include.
 n_confirmed: 500   # CP/KP — confirmed planets
 n_false_pos: 500   # FP/FA — false positives
-n_quiet:     500   # No flagged signals (negative class supplement)
 
 # Sector filtering — None means use everything available.
 sectors: null

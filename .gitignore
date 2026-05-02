@@ -25,7 +25,8 @@ env/
 # --- Data + artifacts (large, regeneratable) ---
 # Everything under data/ is reproducible: labels.parquet from
 # catalog.py, views.npz from build_dataset.py, raw FITS from MAST.
-data/
+# Anchored to repo root so conf/data/ (the Hydra configs) is NOT ignored.
+/data/
 models/*.keras
 models/*.h5
 models/*.joblib
