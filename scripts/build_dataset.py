@@ -12,7 +12,6 @@ Hydra entry point. Usage:
 
     python scripts/build_dataset.py                  # full dataset
     python scripts/build_dataset.py data=small       # tiny smoke set
-    python scripts/build_dataset.py data.n_quiet=0   # skip quiet stars
 """
 
 from __future__ import annotations
@@ -44,7 +43,6 @@ def main(cfg: DictConfig) -> None:
         CatalogRequest(
             n_confirmed=int(cfg.data.n_confirmed),
             n_false_pos=int(cfg.data.n_false_pos),
-            n_quiet=int(cfg.data.n_quiet),
             n_confirmed_kepler=int(cfg.data.get("n_confirmed_kepler", 0)),
             n_false_pos_kepler=int(cfg.data.get("n_false_pos_kepler", 0)),
             seed=int(cfg.data.seed),
@@ -144,17 +142,27 @@ def main(cfg: DictConfig) -> None:
             skips["preprocess_error"] += 1
             continue
 
-        # Stellar features (best-effort; NaN if unavailable).
-        # For Kepler targets, stellar params come from the KOI catalog row
-        # itself (already in teff/radius/logg/tmag columns), so we prefer
-        # those over a TIC lookup that would fail for KIC IDs.
+        # Aux feature vector (8 dims):
+        #   [teff, radius, logg, tmag,  depth, duration, log_period, snr]
+        # Stellar params come from the KOI catalog row for Kepler targets and
+        # from a TIC lookup for TESS targets. SNR is only populated for KOI
+        # rows (koi_model_snr); TESS rows leave it NaN until the TESS catalog
+        # query is extended.
+        log_period = np.log(float(period)) if float(period) > 0 else np.nan
+        depth_val = float(row["depth"]) if pd.notna(row.get("depth")) else np.nan
+        dur_val = float(row["duration"]) if pd.notna(row.get("duration")) else np.nan
         if mission == "Kepler":
+            snr_val = float(row["snr"]) if pd.notna(row.get("snr")) else np.nan
             aux.append(
                 [
                     float(row["teff"]) if pd.notna(row.get("teff")) else np.nan,
                     float(row["radius"]) if pd.notna(row.get("radius")) else np.nan,
                     float(row["logg"]) if pd.notna(row.get("logg")) else np.nan,
                     float(row["tmag"]) if pd.notna(row.get("tmag")) else np.nan,
+                    depth_val,
+                    dur_val,
+                    log_period,
+                    snr_val,
                 ]
             )
         else:
@@ -165,6 +173,10 @@ def main(cfg: DictConfig) -> None:
                     sp.radius if sp.radius is not None else np.nan,
                     sp.logg if sp.logg is not None else np.nan,
                     sp.tmag if sp.tmag is not None else np.nan,
+                    depth_val,
+                    dur_val,
+                    log_period,
+                    np.nan,
                 ]
             )
         g_views.append(views.global_view)
