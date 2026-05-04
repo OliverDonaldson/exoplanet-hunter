@@ -65,16 +65,21 @@ def _tap_query(adql: str, fmt: str = "csv") -> pd.DataFrame:
 def _query_confirmed_planets() -> pd.DataFrame:
     """Confirmed planets observed by TESS, with transit parameters.
 
-    ``pl_tranmid`` is stored in the archive as full BJD (~2,458,000+), but
-    TESS light curves use BTJD = BJD − 2457000. We subtract the offset at
-    query time so downstream phase-folding works: a finite-precision period
-    accumulates many days of error across ~700k cycles, so keeping the
-    (t − t0) magnitude small is essential, not cosmetic.
+    Unit normalisation applied at query time (matches the rest of the
+    pipeline, where every catalogue uses fraction for depth and days for
+    duration):
+
+      * ``pl_tranmid`` is full BJD (~2,458,000+); TESS light curves use
+        BTJD = BJD − 2457000, so we subtract the offset. Phase-folding accumulates
+        many days of error across ~10^5 orbital cycles otherwise.
+      * ``pl_trandep`` is **percent** in the archive; divide by 100 to get fraction.
+      * ``pl_trandur`` is **hours** in the archive; divide by 24 to get days.
     """
     adql = (
         "select pl_name, tic_id, hostname, "
         "       pl_orbper, pl_tranmid - 2457000.0 as pl_tranmid, "
-        "       pl_trandep, pl_trandur, "
+        "       pl_trandep / 100.0 as pl_trandep, "
+        "       pl_trandur / 24.0 as pl_trandur, "
         "       st_teff, st_rad, st_logg, sy_tmag "
         "from ps "
         "where tic_id is not null "
@@ -110,19 +115,15 @@ def _query_confirmed_planets() -> pd.DataFrame:
 def _query_toi() -> pd.DataFrame:
     """All TOIs with their disposition — includes both candidates and false positives.
 
-    Note: TOI's `pl_trandurh` is in **hours** while `ps.pl_trandur` (in
-    `_query_confirmed_planets`) is in **days**. We convert to days here so
-    the combined catalogue has consistent units throughout — downstream
-    code (build_dataset.py, score_target.py, build_views) all expect days.
-
-    ``pl_tranmid`` from the TOI table is full BJD (~2,458,000+). TESS light
-    curves use BTJD = BJD − 2457000, so we subtract the offset at query time
-    (same as ``_query_confirmed_planets``).
+    Unit normalisation applied at query time:
+      * ``pl_tranmid`` full BJD → BTJD (subtract 2,457,000) for TESS-cadence folding.
+      * ``pl_trandep`` is **percent** → divide by 100 for fraction.
+      * ``pl_trandurh`` is **hours** → divide by 24 for days.
     """
     adql = (
         "select toi, tid as tic_id, "
         "       pl_orbper as period, pl_tranmid - 2457000.0 as t0, "
-        "       pl_trandep as depth, pl_trandurh / 24.0 as duration, "
+        "       pl_trandep / 100.0 as depth, pl_trandurh / 24.0 as duration, "
         "       tfopwg_disp as disposition, "
         "       st_teff as teff, st_rad as radius, "
         "       st_logg as logg, st_tmag as tmag "

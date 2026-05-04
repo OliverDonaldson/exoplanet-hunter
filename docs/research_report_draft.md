@@ -47,7 +47,7 @@ We present an end-to-end deep-learning pipeline for detecting transiting exoplan
 
 ## Introduction
 
-The transit method has confirmed 4,307 of the 5,787 known exoplanets to date (>74% of the catalogue). NASA's *Transiting Exoplanet Survey Satellite* (TESS), operating since April 2018, has catalogued over 7,800 candidates, of which fewer than 720 have been independently confirmed (Islam, 2026). The classification backlog — over 7,000 unreviewed candidate signals — is structurally beyond the capacity of manual expert vetting and motivates an automated, calibrated, and reproducible machine-learning vetting pipeline.
+As of 30 April 2026, the NASA Exoplanet Archive lists 6,278 confirmed exoplanets, of which 4,640 (73.9 %) were discovered by the transit method. NASA's *Transiting Exoplanet Survey Satellite* (TESS), operating since April 2018, has catalogued 7,931 project candidates; the 23 April 2026 data release added 114 new TESS planets in a single update, bringing TESS-confirmed totals to 885 (NASA Exoplanet Archive, 2026). The remaining ~7,000 unreviewed candidates constitute a structural backlog that is beyond the capacity of manual expert vetting and motivates an automated, calibrated, and reproducible machine-learning vetting pipeline. Kepler — TESS's predecessor, with the deeper, narrower-field photometry that produced the highest-quality vetting labels available — contributes 2,784 confirmed planets that this project uses as supplementary training data.
 
 This project is a portfolio piece for DATA 305 (Marsland, 2014), grounded in the deep-learning tooling covered in Géron (2019) — Keras Functional API, callbacks, Wide-and-Deep architectures, MLflow experiment tracking — and the regression diagnostics taught in DATA 303 (which informed the calibration and uncertainty-quantification components). The technical objective is to build, from real data only (no synthetic light curves in the final training set), a pipeline that can:
 
@@ -213,7 +213,11 @@ Howarth, I. D., & Morello, G. (2020). Kepler-13Ab — gravity darkening, transit
 
 Islam, M. R. (2026). ExoNet: Calibrated multimodal deep learning for TESS exoplanet candidate vetting using phase-folded light curves, stellar parameters, and multi-head attention. *arXiv preprint* arXiv:2604.15560v3.
 
+Khan, O. (2026). UMI: GPU-accelerated asymmetric robust estimator for photometric detrending in exoplanet transit searches. *arXiv preprint* arXiv:2604.06602. Distributed as the `torchflat` Python package.
+
 Lin, T.-Y., Goyal, P., Girshick, R., He, K., & Dollár, P. (2017). Focal loss for dense object detection. *Proceedings of the IEEE International Conference on Computer Vision (ICCV)*, 2980–2988.
+
+NASA Exoplanet Archive. (2026). Exoplanet and candidate statistics, accessed May 2026. https://exoplanetarchive.ipac.caltech.edu/docs/counts_detail.html
 
 Marsland, S. (2014). *Machine learning: An algorithmic perspective* (2nd ed.). Chapman and Hall/CRC.
 
@@ -239,9 +243,9 @@ DATA 303 — Statistical Modelling for Data Science, Weeks 1–6 (Victoria Unive
 
 ## Project artefacts
 
-- **Codebase:** `/Users/ollie/Project/`, branch `fix/training-stability` at time of writing.
-- **Catalogue:** `data/labels/labels.parquet` (4,000 rows), `data/labels/candidates.parquet` (6,203 held-out planet candidates).
-- **Processed views:** `data/processed/views.npz` (currently 1,959 examples; combined-mission rebuild in progress).
-- **Trained model:** `models/cnn_dualview.keras` (1.5 MB), `models/cnn_calibrator.joblib` (calibrator + threshold + aux pipeline bundle).
-- **Experiment history:** `mlruns/732906991717652602/` — 14 runs across stability-fix iterations.
-- **Reference papers consulted:** `mnrasl_492_1_l17.pdf` (Howarth & Morello 2020), `2604.15560v3.pdf` (ExoNet), `Deep Learning to Classify Exoplanet Light Curves in Kepler and TESS.pdf` (Xie et al. 2025), and the Géron textbook.
+- **Codebase:** `/Users/ollie/Project/`, branch `fix/data-units` at time of writing; `main` at the branch-1 milestone (`merge: training stability fixes (test AUC 0.901 → 0.941)`).
+- **Catalogue:** `data/labels/labels.parquet`, `data/labels/candidates.parquet` (held-out PCs for inference).
+- **Processed views:** `data/processed/views.npz` — 3,239 examples after branch-1 build (TESS + Kepler combined, group-stratified).
+- **Trained model:** `models/cnn_dualview.keras`, `models/cnn_calibrator.joblib` (calibrator + threshold + aux pipeline bundle).
+- **Experiment history:** `mlruns/732906991717652602/` — runs covering all stability-fix iterations and the branch-1 milestone (`f7a6a0b5567a495cb59afe5ebfe44972`, test ROC-AUC = 0.941).
+- **Reference papers consulted:** the Géron textbook (2019); Howarth & Morello (2020) on Kepler-13Ab; Islam (2026) ExoNet; Xie et al. (2025) SE-CNN-RlNet; Khan (2026) UMI detrending; and a May-2026 literature review covering ExoMiner++ 2.0, Vision Transformers with Recurrence Plots, and centroid-shift diagnostics.
