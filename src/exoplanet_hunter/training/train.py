@@ -202,29 +202,33 @@ def _train_keras(
         train_v.aux_features.shape[1] if use_aux and train_v.aux_features is not None else None
     )
 
-    # Impute NaN aux features with per-column medians from the training set.
-    # This is essential: TESS targets have no SNR, many targets missing stellar
-    # params — NaNs propagate through dense layers and make loss = nan.
+    # Aux pipeline: median impute → standardise. Fit on train only; reuse
+    # for val/test/inference. Without scaling, raw Teff (~5800) and log_period
+    # (~1) sit on incompatible scales and the dense head's gradients explode
+    # (the `loss=nan` failure we saw in earlier runs).
+    aux_pipeline = None
     if use_aux and aux_dim is not None:
-        import numpy as np
+        from sklearn.impute import SimpleImputer
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
 
         assert train_v.aux_features is not None
         assert val_v.aux_features is not None
         assert test_v.aux_features is not None
-        col_medians: np.ndarray = np.asarray(np.nanmedian(train_v.aux_features, axis=0))
-        col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
-
-        def _impute(arr: np.ndarray) -> np.ndarray:
-            out = arr.copy()
-            for j in range(out.shape[1]):
-                mask = np.isnan(out[:, j])
-                out[mask, j] = col_medians[j]
-            return out
-
-        train_v.aux_features = _impute(train_v.aux_features)
-        val_v.aux_features = _impute(val_v.aux_features)
-        test_v.aux_features = _impute(test_v.aux_features)
-        log.info("[train-cnn] aux NaN imputed with train medians: %s", col_medians.tolist())
+        aux_pipeline = Pipeline(
+            steps=[
+                ("impute", SimpleImputer(strategy="median")),
+                ("scale", StandardScaler()),
+            ]
+        )
+        train_v.aux_features = aux_pipeline.fit_transform(train_v.aux_features).astype(np.float32)
+        val_v.aux_features = aux_pipeline.transform(val_v.aux_features).astype(np.float32)
+        test_v.aux_features = aux_pipeline.transform(test_v.aux_features).astype(np.float32)
+        log.info(
+            "[train-cnn] aux pipeline fitted — impute medians=%s  scale means=%s",
+            aux_pipeline.named_steps["impute"].statistics_.tolist(),
+            aux_pipeline.named_steps["scale"].mean_.tolist(),
+        )
 
     model = build_cnn_dualview(
         cfg.model,
@@ -263,7 +267,6 @@ def _train_keras(
         augment=bool(cfg.preprocess.augmentation.enabled),
         time_shift_frac=float(cfg.preprocess.augmentation.time_shift_frac),
         noise_std=float(cfg.preprocess.augmentation.noise_std),
-        flip_prob=float(cfg.preprocess.augmentation.flip_prob),
         scale_range=float(cfg.preprocess.augmentation.get("scale_range", 0.0)),
         mask_prob=float(cfg.preprocess.augmentation.get("mask_prob", 0.0)),
         use_aux=use_aux,
@@ -355,11 +358,20 @@ def _train_keras(
         mlflow.log_metric("test_brier_calibrated", cal_brier)
         log.info("[train-cnn] Brier score — uncal=%.4f  calibrated=%.4f", val_brier, cal_brier)
 
-        # Save calibrator alongside model so score_target.py can load it.
+        # Save calibrator + aux pipeline alongside model so score_target.py
+        # can reproduce the exact training-time aux preprocessing.
         import joblib
 
         cal_path = paths.models / "cnn_calibrator.joblib"
-        joblib.dump({"calibrator": ir, "threshold": best_threshold}, cal_path)
+        joblib.dump(
+            {
+                "calibrator": ir,
+                "threshold": best_threshold,
+                "aux_pipeline": aux_pipeline,
+                "aux_dim": aux_dim,
+            },
+            cal_path,
+        )
         mlflow.log_artifact(str(cal_path))
 
         log_classification_artifacts(

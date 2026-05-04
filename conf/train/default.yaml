@@ -8,6 +8,7 @@ prefetch: AUTOTUNE
 optimizer:
   _target_: tensorflow.keras.optimizers.Adam
   learning_rate: 5.0e-4
+  clipnorm: 1.0
 
 loss:
   type: binary_crossentropy

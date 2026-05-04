@@ -61,7 +61,6 @@ def main(cfg: DictConfig) -> None:
         CatalogRequest(
             n_confirmed=int(cfg.data.n_confirmed),
             n_false_pos=int(cfg.data.n_false_pos),
-            n_quiet=int(cfg.data.n_quiet),
             n_confirmed_kepler=int(cfg.data.get("n_confirmed_kepler", 0)),
             n_false_pos_kepler=int(cfg.data.get("n_false_pos_kepler", 0)),
             seed=int(cfg.data.seed),

@@ -1,0 +1,26 @@
+# Combined TESS + Kepler dataset for maximum training scale.
+# Storage budget: ~16 GB internal (TESS) + ~75-100 GB on SANDISK USB (Kepler).
+#
+# Usage:
+#   export KEPLER_RAW_DIR=/Volumes/SANDISK/exoplanet_kepler
+#   python scripts/build_dataset.py data=large
+name: large
+
+# TESS targets (same as default)
+n_confirmed: 500
+n_false_pos: 500
+
+# Kepler / KOI targets — balanced, fits safely on 114 GB SANDISK
+n_confirmed_kepler: 1250
+n_false_pos_kepler: 1250
+
+sectors: null
+author: SPOC
+cadence: 120
+
+seed: ${seed}
+
+split:
+  train: 0.7
+  val:   0.15
+  test:  0.15

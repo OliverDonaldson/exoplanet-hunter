@@ -4,7 +4,6 @@ name: small
 
 n_confirmed: 10
 n_false_pos: 10
-n_quiet:     10
 
 sectors: null
 author:  SPOC
