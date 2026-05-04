@@ -51,3 +51,6 @@ multirun/
 .env
 .env.*
 !.env.example
+
+# --- Run logs (build.log, training.log, etc.) ---
+*.log
