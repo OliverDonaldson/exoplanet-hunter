@@ -24,10 +24,17 @@ from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import (
     PrecisionRecallDisplay,
     RocCurveDisplay,
+    average_precision_score,
+    brier_score_loss,
     confusion_matrix,
     precision_recall_fscore_support,
     roc_auc_score,
 )
+
+# Confidence tiers used by RAVEN (Lafarga 2026) and ExoNet (Islam 2026) for
+# downstream prioritisation. ≥0.99 is the validation threshold; ≥0.9 is the
+# RAVEN initial vetting threshold; lower tiers are useful for triage.
+CONFIDENCE_TIERS: list[float] = [0.5, 0.7, 0.9, 0.99]
 
 
 def setup_mlflow(cfg: DictConfig) -> None:
@@ -83,12 +90,16 @@ def log_classification_artifacts(
     threshold: float = 0.5,
     out_dir: Path,
 ) -> None:
-    """Log ROC, PR, and confusion-matrix plots + summary metrics."""
+    """Log ROC, PR, confusion-matrix plots, summary metrics, and a
+    confidence-tier breakdown matching the conventions used by ExoNet
+    (Islam 2026) and RAVEN (Lafarga 2026)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     y_pred = (y_score >= threshold).astype(int)
 
-    # --- metrics ---------------------------------------------------------
+    # --- summary metrics at the chosen (F1-optimal) threshold ------------
     auc = roc_auc_score(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
+    brier = brier_score_loss(y_true, y_score)
     precision, recall, f1, _ = precision_recall_fscore_support(
         y_true,
         y_pred,
@@ -98,11 +109,48 @@ def log_classification_artifacts(
     mlflow.log_metrics(
         {
             "test_roc_auc": float(auc),
+            "test_pr_auc": float(pr_auc),
+            "test_brier": float(brier),
             "test_precision": float(precision),
             "test_recall": float(recall),
             "test_f1": float(f1),
+            "test_threshold_used": float(threshold),
         }
     )
+
+    # --- multi-threshold metrics (RAVEN/ExoNet-style) --------------------
+    # Reports precision, recall, and the absolute count of candidates that
+    # exceed each tier. RAVEN uses ≥0.9 for initial vetting and ≥0.99 for
+    # statistical validation; ExoNet uses ≥0.7/0.85/0.95 as confidence tiers.
+    n_total = len(y_true)
+    n_pos = int((y_true == 1).sum())
+    tier_metrics: dict[str, float] = {}
+    for tau in CONFIDENCE_TIERS:
+        pred_tau = (y_score >= tau).astype(int)
+        n_above = int(pred_tau.sum())
+        if n_above > 0:
+            tp = int(((pred_tau == 1) & (y_true == 1)).sum())
+            p_tau = tp / n_above
+            r_tau = tp / n_pos if n_pos > 0 else 0.0
+        else:
+            p_tau = float("nan")
+            r_tau = 0.0
+        tier_metrics[f"precision_at_{tau:.2f}"] = p_tau
+        tier_metrics[f"recall_at_{tau:.2f}"] = r_tau
+        tier_metrics[f"n_above_{tau:.2f}"] = float(n_above)
+    mlflow.log_metrics(tier_metrics)
+
+    # --- confidence-tier table (saved as text artifact) ------------------
+    tier_lines = ["threshold  n_above  frac_above  precision  recall"]
+    for tau in CONFIDENCE_TIERS:
+        n_above = int((y_score >= tau).sum())
+        frac = n_above / n_total if n_total else 0.0
+        p = tier_metrics[f"precision_at_{tau:.2f}"]
+        r = tier_metrics[f"recall_at_{tau:.2f}"]
+        tier_lines.append(f"{tau:>9.2f}  {n_above:>7d}  {frac:>10.3f}  " f"{p:>9.3f}  {r:>6.3f}")
+    tier_path = out_dir / "confidence_tiers.txt"
+    tier_path.write_text("\n".join(tier_lines) + "\n")
+    mlflow.log_artifact(str(tier_path))
 
     # --- ROC -------------------------------------------------------------
     fig, ax = plt.subplots()

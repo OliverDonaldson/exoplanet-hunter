@@ -54,27 +54,60 @@ class CatalogRequest:
     seed: int = 42
 
 
-def _tap_query(adql: str, fmt: str = "csv") -> pd.DataFrame:
-    """Run a TAP query against the NASA Exoplanet Archive."""
-    log.info("[catalog] querying TAP — %s", adql.split("from")[1].split()[0])
-    r = requests.get(TAP_URL, params={"query": adql, "format": fmt}, timeout=120)
-    r.raise_for_status()
-    return pd.read_csv(io.StringIO(r.text))
+def _tap_query(adql: str, fmt: str = "csv", max_retries: int = 3) -> pd.DataFrame:
+    """Run a TAP query against the NASA Exoplanet Archive.
+
+    Retries on transient HTTP errors (5xx, timeouts) with exponential backoff.
+    The IPAC TAP service occasionally returns 502 (Proxy Error) under load;
+    without retry these terminate a 75-minute build pipeline at minute zero.
+    """
+    import time
+
+    table = adql.split("from")[1].split()[0]
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            log.info(
+                "[catalog] querying TAP — %s (attempt %d/%d)",
+                table, attempt + 1, max_retries,
+            )
+            r = requests.get(TAP_URL, params={"query": adql, "format": fmt}, timeout=120)
+            r.raise_for_status()
+            return pd.read_csv(io.StringIO(r.text))
+        except (requests.exceptions.HTTPError, requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            if attempt + 1 == max_retries:
+                break
+            backoff = 2 ** attempt * 5  # 5s, 10s, 20s
+            log.warning(
+                "[catalog] TAP query failed (%s) — retrying in %ds",
+                type(exc).__name__, backoff,
+            )
+            time.sleep(backoff)
+    raise RuntimeError(
+        f"TAP query for table '{table}' failed after {max_retries} attempts"
+    ) from last_exc
 
 
 def _query_confirmed_planets() -> pd.DataFrame:
     """Confirmed planets observed by TESS, with transit parameters.
 
-    ``pl_tranmid`` is stored in the archive as full BJD (~2,458,000+), but
-    TESS light curves use BTJD = BJD − 2457000. We subtract the offset at
-    query time so downstream phase-folding works: a finite-precision period
-    accumulates many days of error across ~700k cycles, so keeping the
-    (t − t0) magnitude small is essential, not cosmetic.
+    Unit normalisation applied at query time (matches the rest of the
+    pipeline, where every catalogue uses fraction for depth and days for
+    duration):
+
+      * ``pl_tranmid`` is full BJD (~2,458,000+); TESS light curves use
+        BTJD = BJD − 2457000, so we subtract the offset. Phase-folding accumulates
+        many days of error across ~10^5 orbital cycles otherwise.
+      * ``pl_trandep`` is **percent** in the archive; divide by 100 to get fraction.
+      * ``pl_trandur`` is **hours** in the archive; divide by 24 to get days.
     """
     adql = (
         "select pl_name, tic_id, hostname, "
         "       pl_orbper, pl_tranmid - 2457000.0 as pl_tranmid, "
-        "       pl_trandep, pl_trandur, "
+        "       pl_trandep / 100.0 as pl_trandep, "
+        "       pl_trandur / 24.0 as pl_trandur, "
         "       st_teff, st_rad, st_logg, sy_tmag "
         "from ps "
         "where tic_id is not null "
@@ -110,19 +143,23 @@ def _query_confirmed_planets() -> pd.DataFrame:
 def _query_toi() -> pd.DataFrame:
     """All TOIs with their disposition — includes both candidates and false positives.
 
-    Note: TOI's `pl_trandurh` is in **hours** while `ps.pl_trandur` (in
-    `_query_confirmed_planets`) is in **days**. We convert to days here so
-    the combined catalogue has consistent units throughout — downstream
-    code (build_dataset.py, score_target.py, build_views) all expect days.
+    Unit normalisation applied at query time. Note: the TOI and PS tables in
+    the NASA Exoplanet Archive use *different* units for `pl_trandep` (the TOI
+    table is ppm; the PS table is percent). Both are correctly documented at
+    https://exoplanetarchive.ipac.caltech.edu/docs/API_toi_columns.html and
+    https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html . An
+    earlier version of this code applied `/100.0` to both, which was correct
+    for PS but produced 10,000× too-large values for TOI rows. Fixed in commit
+    on branch fix/data-units.
 
-    ``pl_tranmid`` from the TOI table is full BJD (~2,458,000+). TESS light
-    curves use BTJD = BJD − 2457000, so we subtract the offset at query time
-    (same as ``_query_confirmed_planets``).
+      * ``pl_tranmid`` full BJD → BTJD (subtract 2,457,000) for TESS-cadence folding.
+      * ``pl_trandep`` is **ppm** → divide by 1.0e6 for fraction.
+      * ``pl_trandurh`` is **hours** → divide by 24 for days.
     """
     adql = (
         "select toi, tid as tic_id, "
         "       pl_orbper as period, pl_tranmid - 2457000.0 as t0, "
-        "       pl_trandep as depth, pl_trandurh / 24.0 as duration, "
+        "       pl_trandep / 1.0e6 as depth, pl_trandurh / 24.0 as duration, "
         "       tfopwg_disp as disposition, "
         "       st_teff as teff, st_rad as radius, "
         "       st_logg as logg, st_tmag as tmag "
