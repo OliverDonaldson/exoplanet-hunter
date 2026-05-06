@@ -35,8 +35,26 @@ log = get_logger(__name__)
 
 @hydra.main(version_base="1.3", config_path="../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
+    import os
+
     set_global_seed(int(cfg.seed))
     paths = ProjectPaths.from_cfg(cfg)
+
+    # Loud warning if Kepler targets are requested but KEPLER_RAW_DIR is unset.
+    # Without it, ~75 GB of Kepler downloads will land on the internal SSD
+    # instead of the SANDISK USB. Continues after the warning so a fresh
+    # machine without the env var can still run end-to-end.
+    n_kepler_total = int(cfg.data.get("n_confirmed_kepler", 0)) + int(
+        cfg.data.get("n_false_pos_kepler", 0)
+    )
+    if n_kepler_total > 0 and not os.environ.get("KEPLER_RAW_DIR"):
+        log.warning(
+            "[build] requesting %d Kepler targets but KEPLER_RAW_DIR is unset. "
+            "Files will land at %s (typically the internal SSD). "
+            "Ctrl-C now and `export KEPLER_RAW_DIR=...` if that's not what you want.",
+            n_kepler_total,
+            paths.data_raw_kepler,
+        )
 
     # --- Stage 1 — labelled catalogue ----------------------------------
     catalog = build_label_catalog(

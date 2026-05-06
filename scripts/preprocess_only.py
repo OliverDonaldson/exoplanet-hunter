@@ -57,6 +57,28 @@ def main(cfg: DictConfig) -> None:
     set_global_seed(int(cfg.seed))
     paths = ProjectPaths.from_cfg(cfg)
 
+    # Safety check: if the config will request Kepler targets, the Kepler FITS
+    # cache must actually be reachable. The KEPLER_RAW_DIR env var is the
+    # canonical pointer; without it the path falls back to data/raw_kepler/
+    # (typically empty), which silently produces a TESS-only dataset and looks
+    # like missing_fits=2496 at the end of a 75-minute run. Fail loudly instead.
+    n_kepler_total = int(cfg.data.get("n_confirmed_kepler", 0)) + int(
+        cfg.data.get("n_false_pos_kepler", 0)
+    )
+    if n_kepler_total > 0:
+        kepler_path = paths.data_raw_kepler
+        if not kepler_path.exists() or not any(kepler_path.glob("kic_*.fits")):
+            log.error(
+                "[preprocess-only] config requests %d Kepler targets but the Kepler "
+                "cache at %s is empty or missing.\n"
+                "  Set KEPLER_RAW_DIR to the directory containing your kic_*.fits "
+                "files before running, e.g.:\n"
+                "    export KEPLER_RAW_DIR=/Volumes/SANDISK/exoplanet_kepler",
+                n_kepler_total,
+                kepler_path,
+            )
+            sys.exit(2)
+
     catalog = build_label_catalog(
         CatalogRequest(
             n_confirmed=int(cfg.data.n_confirmed),
