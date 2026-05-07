@@ -23,7 +23,23 @@ local_view:
 head:
   fc_units: [256, 128]                  # More capacity than [128,64]
   dropout: 0.4
+  leaky_alpha: 0.1                      # LeakyReLU slope (Xie 2025 §2.2)
+
+attention:                              # MHA on each tower (ExoNet §III.D)
+  num_heads: 8
+  key_dim: 32
+  dropout: 0.1
+
+se:                                     # SE channel attention (Hu 2018, Xie 2025)
+  reduction: 8
+  floor: 4                              # bottleneck floor; first block has C=16
 
 output:
   activation: sigmoid
   units: 1
+
+cross_validation:
+  n_splits: 5
+  shuffle: true
+  random_state: ${seed}
+  val_frac_within_fold: 0.12

@@ -80,10 +80,15 @@ def train_val_test_split(
     val_idx = rest_idx[val_rel]
     test_idx = rest_idx[test_rel]
 
-    return _slice(views, train_idx), _slice(views, val_idx), _slice(views, test_idx)
+    return slice_views(views, train_idx), slice_views(views, val_idx), slice_views(views, test_idx)
 
 
-def _slice(v: ViewArrays, idx: np.ndarray) -> ViewArrays:
+def slice_views(v: ViewArrays, idx: np.ndarray) -> ViewArrays:
+    """Index into a `ViewArrays` and return a new container with the slices.
+
+    Used by both the single-split path and the k-fold CV loop. Numpy fancy
+    indexing copies, so the returned arrays are independent of the source.
+    """
     return ViewArrays(
         global_views=v.global_views[idx],
         local_views=v.local_views[idx],
