@@ -30,12 +30,18 @@ env/
 models/*.keras
 models/*.h5
 models/*.joblib
+# Per-fold CV artifacts (one subdir per MLflow run_id; not covered by
+# the patterns above because `*` doesn't cross slashes).
+models/cv/
 results/
 mlruns/
 mlartifacts/
 # Hydra default output dir (per-run logs + resolved configs)
 outputs/
 multirun/
+
+# --- Claude Code worktrees (transient AI working dirs) ---
+.claude/
 
 # --- lightkurve cache (shared, big) ---
 .lightkurve-cache/
