@@ -25,6 +25,7 @@ from tqdm.auto import tqdm
 
 from exoplanet_hunter.data.catalog import CatalogRequest, build_label_catalog
 from exoplanet_hunter.data.stellar import fetch_stellar_params
+from exoplanet_hunter.features.centroid import extract_centroid_offset
 from exoplanet_hunter.preprocess import build_views, clean_lightcurve, flatten_lightcurve
 from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
 
@@ -134,6 +135,16 @@ def main(cfg: DictConfig) -> None:
 
         try:
             lc = lk.read(str(path))
+            # Compute centroid offset from the RAW lightkurve before clean/flatten
+            # touches the MOM_CENTR1/2 columns. Wrap in try/except so a centroid
+            # failure doesn't kill the whole row — NaN flows to the imputer.
+            try:
+                centroid_snr = extract_centroid_offset(
+                    lc, float(period), float(t0), float(duration)
+                )
+            except Exception as cexc:
+                log.debug("[preprocess-only] TIC %d centroid extract failed: %s", tic, cexc)
+                centroid_snr = float("nan")
             lc = clean_lightcurve(lc, sigma_clip=float(cfg.preprocess.cleaning.sigma_clip))
             lc = flatten_lightcurve(
                 lc,
@@ -157,13 +168,15 @@ def main(cfg: DictConfig) -> None:
             skips["preprocess_error"] += 1
             continue
 
-        # Aux feature vector (8 dims):
-        #   [teff, radius, logg, tmag,  depth, duration, log_period, snr]
-        #   stellar context (4) + transit shape (4)
+        # Aux feature vector (9 dims):
+        #   [teff, radius, logg, tmag,  depth, duration, log_period, snr, centroid_snr]
+        #   stellar context (4) + transit shape (4) + centroid BEB diagnostic (1)
         # depth/duration/period come from the catalog (already computed).
         # SNR is available for Kepler (koi_model_snr); TESS targets use
         # the local-view peak depth as a cheap proxy until SNR is added
         # to the TESS catalog query.
+        # centroid_snr is the 2D in-transit centroid shift in units of σ,
+        # detrended for Kepler quarterly rolls (see features/centroid.py).
         log_period = np.log(float(period)) if float(period) > 0 else np.nan
         depth_val = float(row["depth"]) if pd.notna(row.get("depth")) else np.nan
         dur_val = float(row["duration"]) if pd.notna(row.get("duration")) else np.nan
@@ -179,6 +192,7 @@ def main(cfg: DictConfig) -> None:
                     dur_val,
                     log_period,
                     snr_val,
+                    centroid_snr,
                 ]
             )
         else:
@@ -193,6 +207,7 @@ def main(cfg: DictConfig) -> None:
                     dur_val,
                     log_period,
                     np.nan,  # transit SNR not yet in TESS catalog query
+                    centroid_snr,
                 ]
             )
         g_views.append(views.global_view)
