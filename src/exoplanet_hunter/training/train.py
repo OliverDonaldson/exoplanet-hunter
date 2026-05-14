@@ -59,6 +59,28 @@ from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
 log = get_logger(__name__)
 
 
+_CENTROID_COL = 8  # index of centroid_snr in the 9-dim aux vector
+
+
+def _log1p_centroid(X: np.ndarray) -> np.ndarray:
+    """Apply log1p to the centroid_snr column only.
+
+    Centroid_snr is heavy-tailed on the FP cohort (q90=423, max=10436)
+    while the planet body sits around ~1.1. Raw-scaled StandardScaler
+    fits its mean/std on a distribution dominated by the tail, so the
+    bulk of the data ends up compressed into a few floating-point
+    digits. log1p compresses the tail and recovers the cohort separation.
+
+    Module-level (not lambda) so the persisted Pipeline can be unpickled
+    by score_target.py without code changes.
+    """
+    if X.shape[1] <= _CENTROID_COL:
+        return X
+    X = X.copy()
+    X[:, _CENTROID_COL] = np.log1p(X[:, _CENTROID_COL])
+    return X
+
+
 def run(cfg: DictConfig) -> float:
     """Train one model from a fully-resolved Hydra config.
 
@@ -361,7 +383,7 @@ def _log_fold_balance(
     """Log positive/negative counts and class fraction for each split of a fold."""
     for name, v in (("train", train_v), ("val", val_v), ("test", test_v)):
         labels = v.labels.astype(int)
-        n = int(len(labels))
+        n = len(labels)
         pos = int((labels == 1).sum())
         mlflow.log_metrics(
             {
@@ -517,7 +539,7 @@ def _run_keras_fold(
     if use_aux and aux_dim is not None:
         from sklearn.impute import SimpleImputer
         from sklearn.pipeline import Pipeline
-        from sklearn.preprocessing import StandardScaler
+        from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
         assert train_v.aux_features is not None
         assert val_v.aux_features is not None
@@ -525,6 +547,7 @@ def _run_keras_fold(
         aux_pipeline = Pipeline(
             steps=[
                 ("impute", SimpleImputer(strategy="median")),
+                ("log_centroid", FunctionTransformer(_log1p_centroid, validate=False)),
                 ("scale", StandardScaler()),
             ]
         )
