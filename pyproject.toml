@@ -41,6 +41,8 @@ select = [
 ignore = [
     "E501",     # line length handled by formatter
     "E741",     # `l` is conventional in this codebase for the local-view tensor (paired with `g`)
+    "RUF002",   # ambiguous unicode in docstrings — σ, ×, √, →, α, etc. are conventional physics/maths notation
+    "RUF003",   # ambiguous unicode in comments — same rationale as RUF002
 ]
 
 [tool.ruff.lint.per-file-ignores]

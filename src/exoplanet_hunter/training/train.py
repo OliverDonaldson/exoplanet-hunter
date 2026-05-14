@@ -12,14 +12,27 @@ Logs every run to MLflow. Saves best checkpoint to `models/`.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import hydra
 import joblib
 import mlflow
 import numpy as np
 from hydra.utils import instantiate
-from omegaconf import DictConfig
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedKFold
+from omegaconf import DictConfig, OmegaConf
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    f1_score,
+    roc_auc_score,
+)
+from sklearn.model_selection import (
+    GroupShuffleSplit,
+    StratifiedGroupKFold,
+    StratifiedKFold,
+)
 
 from exoplanet_hunter.features import extract_features
 from exoplanet_hunter.models import (
@@ -31,6 +44,7 @@ from exoplanet_hunter.training.data_module import (
     LightcurveDataset,
     ViewArrays,
     load_views,
+    slice_views,
     train_val_test_split,
 )
 from exoplanet_hunter.training.mlflow_utils import (
@@ -43,6 +57,28 @@ from exoplanet_hunter.training.mlflow_utils import (
 from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
 
 log = get_logger(__name__)
+
+
+_CENTROID_COL = 8  # index of centroid_snr in the 9-dim aux vector
+
+
+def _log1p_centroid(X: np.ndarray) -> np.ndarray:
+    """Apply log1p to the centroid_snr column only.
+
+    Centroid_snr is heavy-tailed on the FP cohort (q90=423, max=10436)
+    while the planet body sits around ~1.1. Raw-scaled StandardScaler
+    fits its mean/std on a distribution dominated by the tail, so the
+    bulk of the data ends up compressed into a few floating-point
+    digits. log1p compresses the tail and recovers the cohort separation.
+
+    Module-level (not lambda) so the persisted Pipeline can be unpickled
+    by score_target.py without code changes.
+    """
+    if X.shape[1] <= _CENTROID_COL:
+        return X
+    X = X.copy()
+    X[:, _CENTROID_COL] = np.log1p(X[:, _CENTROID_COL])
+    return X
 
 
 def run(cfg: DictConfig) -> float:
@@ -63,24 +99,24 @@ def run(cfg: DictConfig) -> float:
         )
 
     views = load_views(views_path)
-    train_v, val_v, test_v = train_val_test_split(
-        views,
-        train=float(cfg.data.split.train),
-        val=float(cfg.data.split.val),
-        test=float(cfg.data.split.test),
-        seed=int(cfg.seed),
-    )
-    log.info(
-        "[train] split sizes — train=%d  val=%d  test=%d",
-        len(train_v.labels),
-        len(val_v.labels),
-        len(test_v.labels),
-    )
 
     if cfg.model.type == "sklearn":
+        train_v, val_v, test_v = train_val_test_split(
+            views,
+            train=float(cfg.data.split.train),
+            val=float(cfg.data.split.val),
+            test=float(cfg.data.split.test),
+            seed=int(cfg.seed),
+        )
+        log.info(
+            "[train] split sizes — train=%d  val=%d  test=%d",
+            len(train_v.labels),
+            len(val_v.labels),
+            len(test_v.labels),
+        )
         return _train_sklearn(cfg, paths, train_v, val_v, test_v)
     if cfg.model.type == "keras":
-        return _train_keras(cfg, paths, train_v, val_v, test_v)
+        return _train_keras(cfg, paths, views)
     raise ValueError(f"unknown model type: {cfg.model.type}")
 
 
@@ -188,14 +224,307 @@ def _train_sklearn(
 # ----------------------------------------------------------------- keras -----
 
 
-def _train_keras(
+def _train_keras(cfg: DictConfig, paths: ProjectPaths, views: ViewArrays) -> float:
+    """Dispatch CNN training between single-split and k-fold CV modes.
+
+    CV mode is selected when `cfg.model.cross_validation` exists and
+    `n_splits >= 2`. Single-split mode preserves the legacy artifact path
+    (`models/cnn_dualview.keras`) for downstream inference scripts.
+    """
+    cv_cfg = OmegaConf.select(cfg.model, "cross_validation")
+    n_splits = int(cv_cfg.n_splits) if cv_cfg is not None else 1
+
+    if n_splits < 2:
+        train_v, val_v, test_v = train_val_test_split(
+            views,
+            train=float(cfg.data.split.train),
+            val=float(cfg.data.split.val),
+            test=float(cfg.data.split.test),
+            seed=int(cfg.seed),
+        )
+        log.info(
+            "[train-cnn] split sizes — train=%d  val=%d  test=%d",
+            len(train_v.labels),
+            len(val_v.labels),
+            len(test_v.labels),
+        )
+        return _train_keras_single(cfg, paths, train_v, val_v, test_v)
+    return _train_keras_cv(cfg, paths, views, cv_cfg)
+
+
+def _train_keras_single(
     cfg: DictConfig,
     paths: ProjectPaths,
     train_v: ViewArrays,
     val_v: ViewArrays,
     test_v: ViewArrays,
 ) -> float:
+    """Legacy single train/val/test split path. Saves to `models/cnn_dualview.keras`."""
+    ckpt_path = paths.models / "cnn_dualview.keras"
+    cal_path = paths.models / "cnn_calibrator.joblib"
+    results_dir = paths.results / "cnn"
+    with mlflow.start_run(run_name=f"cnn-{cfg.data.name}"):
+        log_config(cfg)
+        metrics = _run_keras_fold(
+            cfg=cfg,
+            train_v=train_v,
+            val_v=val_v,
+            test_v=test_v,
+            ckpt_path=ckpt_path,
+            cal_path=cal_path,
+            results_dir=results_dir,
+            history_dir=paths.results / "cnn",
+            log_artifacts=True,
+        )
+        return float(metrics["test_roc_auc"])
+
+
+def _train_keras_cv(
+    cfg: DictConfig,
+    paths: ProjectPaths,
+    views: ViewArrays,
+    cv_cfg: DictConfig,
+) -> float:
+    """Stratified group k-fold CV. Group = tic_id, stratify on label.
+
+    Per fold:
+      - outer split → fold-test (held out)
+      - inner GroupShuffleSplit on the remainder → fold-train + fold-val
+        (val drives EarlyStopping, threshold sweep, calibrator fit)
+      - aux pipeline refit per fold; persisted alongside the fold checkpoint
+      - per-fold classification artifacts logged in a nested MLflow run
+
+    Returns the mean test ROC-AUC across folds (matches Hydra-sweep contract).
+    """
+    n_splits = int(cv_cfg.n_splits)
+    shuffle = bool(cv_cfg.shuffle)
+    random_state = int(cv_cfg.random_state)
+    val_frac = float(cv_cfg.val_frac_within_fold)
+
+    sgkf = StratifiedGroupKFold(
+        n_splits=n_splits,
+        shuffle=shuffle,
+        random_state=random_state,
+    )
+    idx = np.arange(len(views.labels))
+    y = views.labels.astype(int)
+    groups = views.tic_ids
+
+    parent_run_name = f"cnn-cv-{cfg.data.name}"
+    with mlflow.start_run(run_name=parent_run_name) as parent:
+        log_config(cfg)
+        run_id = parent.info.run_id
+        cv_root = paths.models / "cv" / run_id
+        cv_root.mkdir(parents=True, exist_ok=True)
+        results_root = paths.results / "cnn" / "cv" / run_id
+        results_root.mkdir(parents=True, exist_ok=True)
+
+        log.info(
+            "[train-cnn-cv] %d folds, run_id=%s, artifacts→%s",
+            n_splits,
+            run_id,
+            cv_root,
+        )
+
+        fold_rows: list[dict] = []
+        for fold_idx, (trainval_idx, test_idx) in enumerate(sgkf.split(idx, y, groups)):
+            inner_seed = int(cfg.seed) * 1000 + fold_idx
+            inner = GroupShuffleSplit(
+                n_splits=1,
+                test_size=val_frac,
+                random_state=inner_seed,
+            )
+            tr_rel, va_rel = next(inner.split(trainval_idx, y[trainval_idx], groups[trainval_idx]))
+            train_idx = trainval_idx[tr_rel]
+            val_idx = trainval_idx[va_rel]
+
+            train_v = slice_views(views, train_idx)
+            val_v = slice_views(views, val_idx)
+            test_v = slice_views(views, test_idx)
+
+            _log_fold_balance(fold_idx, train_v, val_v, test_v)
+
+            fold_dir = cv_root / f"fold_{fold_idx}"
+            fold_dir.mkdir(parents=True, exist_ok=True)
+            fold_results = results_root / f"fold_{fold_idx}"
+
+            log.info(
+                "[train-cnn-cv] fold %d/%d  train=%d  val=%d  test=%d  inner_seed=%d",
+                fold_idx,
+                n_splits - 1,
+                len(train_v.labels),
+                len(val_v.labels),
+                len(test_v.labels),
+                inner_seed,
+            )
+
+            with mlflow.start_run(run_name=f"fold-{fold_idx}", nested=True):
+                metrics = _run_keras_fold(
+                    cfg=cfg,
+                    train_v=train_v,
+                    val_v=val_v,
+                    test_v=test_v,
+                    ckpt_path=fold_dir / "cnn_dualview.keras",
+                    cal_path=fold_dir / "cnn_calibrator.joblib",
+                    results_dir=fold_results,
+                    history_dir=fold_results,
+                    log_artifacts=True,
+                )
+            metrics["fold"] = fold_idx
+            fold_rows.append(metrics)
+
+        _aggregate_cv(fold_rows, cv_root)
+        return float(np.mean([m["test_roc_auc"] for m in fold_rows]))
+
+
+def _log_fold_balance(
+    fold_idx: int, train_v: ViewArrays, val_v: ViewArrays, test_v: ViewArrays
+) -> None:
+    """Log positive/negative counts and class fraction for each split of a fold."""
+    for name, v in (("train", train_v), ("val", val_v), ("test", test_v)):
+        labels = v.labels.astype(int)
+        n = len(labels)
+        pos = int((labels == 1).sum())
+        mlflow.log_metrics(
+            {
+                f"fold_{fold_idx}_{name}_n": float(n),
+                f"fold_{fold_idx}_{name}_pos": float(pos),
+                f"fold_{fold_idx}_{name}_pos_frac": float(pos / n) if n else 0.0,
+            }
+        )
+
+
+def _aggregate_cv(fold_rows: list[dict], cv_root: Path) -> None:
+    """Log mean/std across folds and write a summary table artifact."""
+    keys = (
+        "test_roc_auc",
+        "test_pr_auc",
+        "test_f1",
+        "test_brier",
+        "best_threshold",
+        "temperature",
+    )
+    means: dict[str, float] = {}
+    stds: dict[str, float] = {}
+    for k in keys:
+        vals = np.array([m[k] for m in fold_rows], dtype=float)
+        means[k] = float(np.mean(vals))
+        stds[k] = float(np.std(vals))
+        mlflow.log_metric(f"cv_{k}_mean", means[k])
+        mlflow.log_metric(f"cv_{k}_std", stds[k])
+
+    header = (
+        f"{'fold':>4}  {'roc_auc':>8}  {'pr_auc':>8}  {'f1':>6}  "
+        f"{'brier':>7}  {'thr':>5}  {'T*':>6}"
+    )
+    lines = [header, "-" * len(header)]
+    for m in fold_rows:
+        lines.append(
+            f"{m['fold']:>4}  "
+            f"{m['test_roc_auc']:>8.4f}  "
+            f"{m['test_pr_auc']:>8.4f}  "
+            f"{m['test_f1']:>6.3f}  "
+            f"{m['test_brier']:>7.4f}  "
+            f"{m['best_threshold']:>5.2f}  "
+            f"{m['temperature']:>6.3f}"
+        )
+    lines.append("-" * len(header))
+    lines.append(
+        f"{'mean':>4}  "
+        f"{means['test_roc_auc']:>8.4f}  "
+        f"{means['test_pr_auc']:>8.4f}  "
+        f"{means['test_f1']:>6.3f}  "
+        f"{means['test_brier']:>7.4f}  "
+        f"{'-':>5}  "
+        f"{means['temperature']:>6.3f}"
+    )
+    lines.append(
+        f"{'std':>4}  "
+        f"{stds['test_roc_auc']:>8.4f}  "
+        f"{stds['test_pr_auc']:>8.4f}  "
+        f"{stds['test_f1']:>6.3f}  "
+        f"{stds['test_brier']:>7.4f}  "
+        f"{'-':>5}  "
+        f"{stds['temperature']:>6.3f}"
+    )
+    summary_path = cv_root / "cv_summary.txt"
+    summary_path.write_text("\n".join(lines) + "\n")
+    mlflow.log_artifact(str(summary_path))
+    log.info("[train-cnn-cv] %s", summary_path)
+    log.info("[train-cnn-cv] summary:\n%s", "\n".join(lines))
+
+
+def _log_se_attention(model: Any, test_ds: Any, results_dir: Path) -> None:
+    """Log mean SE excitation weights per channel for each SE block.
+
+    Branch-3 diagnostic — verifies the channel-attention layers are doing
+    something non-trivial post-training. Saves a per-block JSON with the
+    full per-channel weight vector + summary scalars (mean / std / min /
+    max) to MLflow, and logs the summary scalars as run metrics.
+    """
     import tensorflow as tf
+
+    se_layers = [l for l in model.layers if l.name.endswith("_se_excite")]
+    if not se_layers:
+        return
+
+    introspect = tf.keras.Model(
+        inputs=model.inputs,
+        outputs=[l.output for l in se_layers],
+    )
+    outputs = introspect.predict(test_ds, verbose=0)
+    if not isinstance(outputs, list):
+        outputs = [outputs]
+
+    summary: dict[str, dict] = {}
+    for layer, weights in zip(se_layers, outputs, strict=True):
+        # weights shape: (N, C) — sigmoid activations per sample, per channel
+        per_channel = np.asarray(weights).mean(axis=0)
+        block_name = layer.name.replace("_se_excite", "")
+        summary[block_name] = {
+            "per_channel_mean": per_channel.tolist(),
+            "mean": float(per_channel.mean()),
+            "std": float(per_channel.std()),
+            "min": float(per_channel.min()),
+            "max": float(per_channel.max()),
+            "n_channels": int(per_channel.size),
+        }
+        mlflow.log_metrics(
+            {
+                f"se_{block_name}_mean": summary[block_name]["mean"],
+                f"se_{block_name}_std": summary[block_name]["std"],
+                f"se_{block_name}_min": summary[block_name]["min"],
+                f"se_{block_name}_max": summary[block_name]["max"],
+            }
+        )
+
+    se_path = results_dir / "se_attention_weights.json"
+    se_path.write_text(json.dumps(summary, indent=2))
+    mlflow.log_artifact(str(se_path))
+
+
+def _run_keras_fold(
+    *,
+    cfg: DictConfig,
+    train_v: ViewArrays,
+    val_v: ViewArrays,
+    test_v: ViewArrays,
+    ckpt_path: Path,
+    cal_path: Path,
+    results_dir: Path,
+    history_dir: Path,
+    log_artifacts: bool,
+) -> dict[str, float]:
+    """Train one CNN on a single (train, val, test) split.
+
+    Caller is responsible for opening the surrounding MLflow run. Returns a
+    dict of test metrics: roc_auc, pr_auc, f1, brier (calibrated), best_threshold.
+    """
+    import tensorflow as tf
+
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    cal_path.parent.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     use_aux = bool(getattr(cfg.model, "use_aux_features", False))
     aux_dim = (
@@ -210,7 +539,7 @@ def _train_keras(
     if use_aux and aux_dim is not None:
         from sklearn.impute import SimpleImputer
         from sklearn.pipeline import Pipeline
-        from sklearn.preprocessing import StandardScaler
+        from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
         assert train_v.aux_features is not None
         assert val_v.aux_features is not None
@@ -218,6 +547,7 @@ def _train_keras(
         aux_pipeline = Pipeline(
             steps=[
                 ("impute", SimpleImputer(strategy="median")),
+                ("log_centroid", FunctionTransformer(_log1p_centroid, validate=False)),
                 ("scale", StandardScaler()),
             ]
         )
@@ -312,78 +642,82 @@ def _train_keras(
         class_weight = dict(zip(classes.tolist(), weights.tolist(), strict=False))
         log.info("[train-cnn] class_weight=%s", class_weight)
 
-    ckpt_path = paths.models / "cnn_dualview.keras"
+    callbacks = keras_callbacks(cfg.train, ckpt_path)
 
-    with mlflow.start_run(run_name=f"cnn-{cfg.data.name}"):
-        log_config(cfg)
-        callbacks = keras_callbacks(cfg.train, ckpt_path)
+    history = model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=int(cfg.train.epochs),
+        callbacks=callbacks,
+        class_weight=class_weight,
+        verbose=2,
+    )
+    log_history(history.history, history_dir)
 
-        history = model.fit(
-            train_ds,
-            validation_data=val_ds,
-            epochs=int(cfg.train.epochs),
-            callbacks=callbacks,
-            class_weight=class_weight,
-            verbose=2,
-        )
-        log_history(history.history, paths.results / "cnn")
+    test_score = model.predict(test_ds).squeeze()
+    test_y = test_v.labels.astype(int)
 
-        # Evaluate on test.
-        test_score = model.predict(test_ds).squeeze()
-        test_y = test_v.labels.astype(int)
+    # --- Optimal threshold sweep on validation set -------------------
+    val_score = model.predict(val_ds).squeeze()
+    val_y = val_v.labels.astype(int)
+    thresholds = np.arange(0.05, 0.96, 0.01)
+    f1s = [f1_score(val_y, (val_score >= t).astype(int), zero_division=0) for t in thresholds]
+    best_threshold = float(thresholds[int(np.argmax(f1s))])
+    mlflow.log_metric("best_threshold", best_threshold)
+    log.info("[train-cnn] optimal threshold (val F1): %.2f", best_threshold)
 
-        # --- Optimal threshold sweep on validation set -------------------
-        # Default 0.5 is rarely optimal (Paper 1 finds T≈0.2 is best).
-        # Sweep on val, find the threshold that maximises F1.
-        from sklearn.metrics import f1_score
+    # --- Temperature scaling (Guo 2017; ExoNet 2026) ----------------
+    # Rank-preserving post-hoc calibration: ROC-AUC unchanged, Brier improves.
+    from exoplanet_hunter.training.calibration import TemperatureScaler
 
-        val_score = model.predict(val_ds).squeeze()
-        val_y = val_v.labels.astype(int)
-        thresholds = np.arange(0.05, 0.96, 0.01)
-        f1s = [f1_score(val_y, (val_score >= t).astype(int), zero_division=0) for t in thresholds]
-        best_threshold = float(thresholds[int(np.argmax(f1s))])
-        mlflow.log_metric("best_threshold", best_threshold)
-        log.info("[train-cnn] optimal threshold (val F1): %.2f", best_threshold)
+    calibrator = TemperatureScaler.from_validation(val_score, val_y)
+    test_score_cal = calibrator.predict(test_score)
+    T_star = float(calibrator.T)
+    mlflow.log_metric("temperature_T_star", T_star)
+    log.info("[train-cnn] temperature scaling — T* = %.4f", T_star)
 
-        # --- Isotonic regression calibration (Paper 2) -------------------
-        # Adjust predicted probabilities so they reflect true likelihoods.
-        from sklearn.isotonic import IsotonicRegression
+    # Persist alongside model. Keep "calibrator" key (sklearn-shaped) so
+    # scripts/score_target.py:129 keeps working without changes.
+    joblib.dump(
+        {
+            "calibrator": calibrator,
+            "temperature": T_star,
+            "threshold": best_threshold,
+            "aux_pipeline": aux_pipeline,
+            "aux_dim": aux_dim,
+        },
+        cal_path,
+    )
 
-        ir = IsotonicRegression(out_of_bounds="clip")
-        ir.fit(val_score, val_y)
-        test_score_cal = ir.predict(test_score)
-        val_brier = float(np.mean((val_score - val_y) ** 2))
-        cal_brier = float(np.mean((test_score_cal - test_y) ** 2))
-        mlflow.log_metric("val_brier_uncalibrated", val_brier)
-        mlflow.log_metric("test_brier_calibrated", cal_brier)
-        log.info("[train-cnn] Brier score — uncal=%.4f  calibrated=%.4f", val_brier, cal_brier)
-
-        # Save calibrator + aux pipeline alongside model so score_target.py
-        # can reproduce the exact training-time aux preprocessing.
-        import joblib
-
-        cal_path = paths.models / "cnn_calibrator.joblib"
-        joblib.dump(
-            {
-                "calibrator": ir,
-                "threshold": best_threshold,
-                "aux_pipeline": aux_pipeline,
-                "aux_dim": aux_dim,
-            },
-            cal_path,
-        )
-        mlflow.log_artifact(str(cal_path))
-
+    if log_artifacts:
         log_classification_artifacts(
             test_y,
             test_score_cal,
             threshold=best_threshold,
-            out_dir=paths.results / "cnn",
+            out_dir=results_dir,
         )
-
-        # Log final model.
         mlflow.log_artifact(str(ckpt_path))
-        return float(roc_auc_score(test_y, test_score_cal))
+        mlflow.log_artifact(str(cal_path))
+        _log_se_attention(model, test_ds, results_dir)
+
+    # Compute return metrics. log_classification_artifacts already logged
+    # test_roc_auc/test_pr_auc/test_f1/test_brier on the active run, but we
+    # also recompute for the dict that the CV aggregator consumes — keeps the
+    # aggregator independent of MLflow's metric-history API.
+    test_roc_auc = float(roc_auc_score(test_y, test_score_cal))
+    test_pr_auc = float(average_precision_score(test_y, test_score_cal))
+    test_brier = float(brier_score_loss(test_y, test_score_cal))
+    test_f1 = float(
+        f1_score(test_y, (test_score_cal >= best_threshold).astype(int), zero_division=0)
+    )
+    return {
+        "test_roc_auc": test_roc_auc,
+        "test_pr_auc": test_pr_auc,
+        "test_f1": test_f1,
+        "test_brier": test_brier,
+        "best_threshold": best_threshold,
+        "temperature": T_star,
+    }
 
 
 if __name__ == "__main__":
