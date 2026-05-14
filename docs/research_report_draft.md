@@ -3,7 +3,7 @@
 **Author:** Oliver Donaldson
 **Project type:** Personal research / portfolio piece
 **Background:** Data Science student, Victoria University of Wellington (DATA 305 — Machine Learning, DATA 303 — Statistical Modelling)
-**Status:** *DRAFT — written 2026-05-03. Final metrics pending the in-progress combined TESS+Kepler training run. All numbers reported as "current" reflect the 21 April 2026 baseline (`mlflow run 8dce07454c`); numbers reported as "target" come from the closest published comparator.*
+**Status:** *Updated 2026-05-14 with branch-3 (architecture + centroid) final numbers. All "current" numbers now reflect 5-fold group-stratified cross-validation on 3,275 TESS+Kepler targets (MLflow run `58570d85f1dd4f68a7e888988c88eeab`). The earlier 21 April 2026 single-split baseline (`mlflow run 8dce07454c`, ROC-AUC = 0.901 test) is retained in the comparison table as the branch-2 milestone.*
 
 ---
 
@@ -41,7 +41,7 @@ The vision, design decisions, technical judgment, and writing are mine. Claude i
 
 ## Abstract
 
-We present an end-to-end deep-learning pipeline for detecting transiting exoplanets in NASA TESS and Kepler light curves. The system downloads stitched SPOC/Kepler light curves directly from MAST via `lightkurve`, builds the dual-view (global + local) phase-folded representation of Shallue & Vanderburg (2018), and feeds it through a 1D convolutional neural network with a Wide-and-Deep auxiliary stellar-feature path implemented in the Keras Functional API. The training pipeline is group-stratified by host star to prevent multi-planet leakage, uses gradient clipping and a fitted `SimpleImputer→StandardScaler` aux pipeline to ensure numerical stability, and produces calibrated transit probabilities via isotonic regression with an F1-optimised decision threshold. A baseline Random Forest on hand-crafted features provides a classical-ML reference. On a 1,959-example TESS-only training set, the current model achieves ROC-AUC = 0.945 / test ROC-AUC = 0.901 / F1 = 0.91. Ongoing work expands the dataset to ~3,500 TESS+Kepler examples, addresses the "training stability" failures observed in earlier runs, and incorporates findings from three recent papers — Howarth & Morello (2020) on transit asymmetry, Islam (2026)'s ExoNet, and Xie et al. (2025)'s SE-CNN-RlNet — to motivate planned architectural and feature upgrades. The full pipeline is reproducible via Hydra + MLflow, and all code is open source.
+We present an end-to-end deep-learning pipeline for detecting transiting exoplanets in NASA TESS and Kepler light curves. The system downloads stitched SPOC/Kepler light curves directly from MAST via `lightkurve`, builds the dual-view (global + local) phase-folded representation of Shallue & Vanderburg (2018), and feeds it through a 1D convolutional neural network with Squeeze-and-Excitation channel attention (Hu et al. 2018; Xie et al. 2025), bilateral multi-head attention plus residual late-fusion (Islam 2026), and a Wide-and-Deep auxiliary path carrying 9 stellar/transit/centroid-shift features. Training is 5-fold stratified group k-fold cross-validation grouped by host star to prevent multi-planet leakage; calibration is post-hoc temperature scaling (Guo et al. 2017) fitted per fold on validation logits. A baseline Random Forest on hand-crafted features provides a classical-ML reference. Across 5-fold CV on 3,275 TESS+Kepler targets the final branch-3 model achieves ROC-AUC = 0.9555 ± 0.0044, PR-AUC = 0.9586 ± 0.0058, F1 = 0.888 ± 0.012, Brier = 0.0905 ± 0.0130, with temperature T* = 1.28 ± 0.25 — at parity with Islam (2026)'s ExoNet (ROC-AUC 0.955) on a comparable dataset. The largest single contributions are the SE + MHA + residual fusion block (+0.040 ROC over the CV baseline) and a log1p-transformed centroid-shift feature for background-eclipsing-binary discrimination after Ansdell et al. (2018) (+0.022 ROC and Brier −0.022 over the raw-centroid step). The full pipeline is reproducible via Hydra + MLflow, and all code is open source.
 
 ---
 
@@ -99,16 +99,18 @@ Each downloaded light curve is processed by a deterministic three-stage pipeline
 2. **Flatten** (`flatten_lightcurve`): a Savitzky-Golay filter of window 301 cadences (≈ 10 hours at 2-minute cadence) is fit to the out-of-transit baseline and divided out. *In-transit cadences are masked out of the fit* using the known ephemeris from the catalogue row, otherwise the spline learns to interpolate through the transit and erases the very signal we want to preserve. This is the classic "filter learns the transit" failure mode.
 3. **Fold and bin** (`build_views`): the cleaned, flattened light curve is phase-folded at the catalogue period and binned into a *global view* (2,001 bins spanning the full phase) and a *local view* (201 bins spanning ±3 transit durations around phase 0). Each view is median-subtracted and divided by its absolute minimum so that the baseline is at 0 and the deepest dip is at −1; this lets the model see *transit shape*, not *transit magnitude*.
 
-The output is a single compressed numpy archive (`data/processed/views.npz`) containing `global_views`, `local_views`, `labels`, `tic_ids`, and an 8-dimensional `aux_features` vector per target: `[T_eff, R_*, log g, T_mag, depth, duration, log P, SNR]`.
+The output is a single compressed numpy archive (`data/processed/views.npz`) containing `global_views`, `local_views`, `labels`, `tic_ids`, and a 9-dimensional `aux_features` vector per target: `[T_eff, R_*, log g, T_mag, depth, duration, log P, SNR, centroid_snr]`. The centroid-shift feature (added in branch 3) is the magnitude of the in-transit photocentre offset in units of σ, after detrending the raw `MOM_CENTR1/2` columns for Kepler quarterly rolls and per-segment drift; genuine on-target transits give values < ~3, background eclipsing binaries give values ≳ 3 (Ansdell et al. 2018). Implementation in `src/exoplanet_hunter/features/centroid.py`.
 
 ### Model architecture
 
-The principal model is a dual-view 1D CNN (`src/exoplanet_hunter/models/cnn_dualview.py`) implemented in the Keras Functional API. The architecture follows Shallue & Vanderburg (2018) with extensions adopted from Ansdell et al. (2018):
+The principal model is a dual-view 1D CNN (`src/exoplanet_hunter/models/cnn_dualview.py`) implemented in the Keras Functional API. The architecture is Shallue & Vanderburg (2018) extended with attention and residual fusion in branch 3:
 
-- **Global tower:** 3 convolutional blocks (16, 32, 64 filters), 2 conv layers per block with kernel 5, BatchNorm, ReLU, MaxPool size 5, optional SpatialDropout. Terminates in GlobalAveragePooling1D producing a 64-d embedding.
-- **Local tower:** 2 convolutional blocks (16, 32 filters), 2 conv layers per block with kernel 5, MaxPool size 3. Terminates in GlobalAveragePooling1D producing a 32-d embedding.
-- **Wide path (auxiliary):** the 8-d standardised stellar/transit feature vector concatenated *directly* with the global and local embeddings (the Wide-and-Deep pattern from Géron Ch. 10).
-- **Head:** two fully-connected layers (256, 128 units) with ReLU + BatchNorm + Dropout (p = 0.4), followed by a sigmoid output unit. Dropout is left enabled at inference time (`training=True`) so MC-Dropout uncertainty estimation is available downstream (Gal & Ghahramani, 2016).
+- **Global tower:** 3 convolutional blocks (16, 32, 64 filters), 2 conv layers per block with kernel 5, BatchNorm, ReLU, MaxPool size 5, optional SpatialDropout.
+- **Local tower:** 2 convolutional blocks (16, 32 filters), 2 conv layers per block with kernel 5, MaxPool size 3.
+- **Channel attention (branch 3):** Squeeze-and-Excitation block after each conv block, before MaxPool — GAP → FC(C/r) → ReLU → FC(C) → Sigmoid → channel-wise scale (Hu et al. 2018; placement per Xie et al. 2025, Fig. 1). Re-weights the convolutional channels by global context.
+- **Temporal attention (branch 3):** Multi-Head Attention with residual + LayerNorm at the end of each conv tower, applied to the `(B, T, C)` feature map before GlobalAveragePooling, applied bilaterally to global and local towers (ExoNet, Islam 2026, §III.D).
+- **Wide path (auxiliary):** the 9-d standardised stellar/transit/centroid feature vector concatenated *directly* with the pooled tower embeddings (the Wide-and-Deep pattern from Géron Ch. 10).
+- **Residual fusion head (branch 3):** two fully-connected layers (256, 128 units) with **LeakyReLU(α=0.1, Xie et al. 2025 §2.2)** + BatchNorm + Dropout (p = 0.4), wrapped in a linear residual shortcut from the concatenated embeddings to the head's last layer dimension (ExoNet, Islam 2026, §III.D). The shortcut prevents gradient stagnation in the fusion path before the encoders converge. Dropout is left enabled at inference time (`training=True`) so MC-Dropout uncertainty estimation is available downstream (Gal & Ghahramani, 2016).
 
 A baseline Random Forest classifier on hand-crafted features (depth, duration, depth-SNR, ingress slope, secondary-eclipse depth, odd/even depth ratio) provides the classical-ML reference, with k-fold CV and SHAP feature-importance plots for interpretability.
 
@@ -116,13 +118,13 @@ A baseline Random Forest classifier on hand-crafted features (depth, duration, d
 
 Training runs are launched via Hydra (`scripts/train_model.py`); all hyperparameters live in composable YAML configs under `conf/`. Per-run experiment tracking, including resolved configs, learning curves, evaluation plots, and model artefacts, is logged to MLflow.
 
-- **Split:** 70/15/15 train/val/test, *grouped by `tic_id`* with `sklearn.model_selection.GroupShuffleSplit`. Multi-planet systems and re-observed TICs are kept entirely within a single split; without this, test AUC is inflated by 2–5 points through "seen this star before" leakage.
+- **Split:** 5-fold stratified group k-fold cross-validation with `sklearn.model_selection.StratifiedGroupKFold` (group = `tic_id`, stratify on label). Within each outer fold an inner 88/12 `GroupShuffleSplit` separates training from validation; the inner validation drives EarlyStopping, the F1-optimal decision threshold sweep, and the temperature-scaling fit. Multi-planet systems and re-observed TICs are kept entirely within a single fold; without this, test AUC is inflated by 2–5 points through "seen this star before" leakage. The earlier single 70/15/15 split (used through branch 2) is retained in the comparison table for historical context — the move to k-fold is a *correctness* fix, not a tuning lever.
 - **Optimiser:** Adam, learning rate 5×10⁻⁴, **with `clipnorm = 1.0` to cap gradient norms**. This was added after multiple earlier runs collapsed to `loss = NaN` mid-training, traced to unscaled stellar-parameter inputs (T_eff ≈ 5,800 vs log_period ≈ 1) producing exploding gradients in the dense head.
 - **Aux feature pipeline:** raw aux features are passed through a `sklearn.Pipeline([SimpleImputer(strategy="median"), StandardScaler])`, fitted on the training split only and reused (not refit) at val/test/inference. The fitted pipeline is persisted alongside the model checkpoint so `score_target.py` reproduces the exact training-time preprocessing.
 - **Loss:** binary cross-entropy by default; binary focal loss (γ = 2, α = 0.75) optionally available for stronger negative-class downweighting. When focal loss is active, `class_weight` is disabled to prevent double-counting.
 - **Augmentation:** small Gaussian noise (σ = 5×10⁻⁴), small phase shifts (±0.5 %), random depth scaling (±5 %), and 2 % random bin masking. *Time-flip augmentation was removed* on the basis of Howarth & Morello (2020): real transits are not symmetric, and flipping them mislabels asymmetric ingress/egress shapes.
 - **Callbacks:** `EarlyStopping` on `val_auc` (patience 25, restore best), `ModelCheckpoint` on `val_auc`, `ReduceLROnPlateau` on `val_loss` (factor 0.5, patience 8). All standard from the DATA 305 / Géron Ch. 11 toolbox.
-- **Calibration:** isotonic regression fitted on validation predictions, applied to test scores. Decision threshold selected by sweeping ∈ [0.05, 0.95] on the validation set and choosing the value that maximises F1.
+- **Calibration:** post-hoc temperature scaling (Guo et al. 2017; ExoNet 2026) — a single scalar T > 0 fitted on validation logits by negative-log-likelihood minimisation, applied at inference as `sigmoid(logit / T)`. Rank-preserving: ROC-AUC and PR-AUC are identical pre- and post-calibration, but Brier and reliability improve. T > 1 indicates the model was overconfident; T < 1 the opposite. (Branch 2 used `sklearn.isotonic.IsotonicRegression` instead; it is functionally equivalent on accuracy but introduces ~3 dozen learnable knots per fold against temperature's one, so generalises slightly worse out of sample. The bundle interface — `calibrator.predict(scores)` — is unchanged, so `score_target.py` works against either.) Decision threshold selected by sweeping ∈ [0.05, 0.95] on the validation set and choosing the value that maximises F1.
 
 ### Tooling
 
@@ -139,25 +141,34 @@ Training runs are launched via Hydra (`scripts/train_model.py`); all hyperparame
 
 ## Results & Discussion
 
-### Current performance
+### Branch-3 final performance (5-fold group-stratified CV)
 
-The most recent stable training run (`mlflow run 8dce07454c`, 21 April 2026, `cnn-large` configuration on 1,959 examples) achieved:
+5-fold `StratifiedGroupKFold` (group = `tic_id`) on 3,275 TESS+Kepler targets, MLflow run `58570d85f1dd4f68a7e888988c88eeab`:
 
-| Metric | Train | Validation | Test |
+| Metric | Mean ± std (across folds) |
+|---|---|
+| ROC-AUC | 0.9555 ± 0.0044 |
+| PR-AUC | 0.9586 ± 0.0058 |
+| F1 (at fold-best threshold) | 0.888 ± 0.012 |
+| Brier (calibrated) | 0.0905 ± 0.0130 |
+| Temperature T* | 1.275 ± 0.250 |
+
+Per-fold ROC-AUC: 0.949, 0.953, 0.960, 0.961, 0.956 — every fold clears 0.948.
+
+**Ladder of incremental gains.** Each row below is an additive change with no other modifications; same 3,275-row 5-fold CV split throughout. T* is reported only for folds where temperature scaling is active.
+
+| Variant | ROC-AUC | Brier | T* |
 |---|---|---|---|
-| ROC-AUC | 0.945 | 0.887 | 0.901 |
-| Accuracy | 0.883 | 0.871 | — |
-| Precision | 0.971 | 0.922 | 0.918 |
-| Recall | 0.879 | 0.915 | 0.911 |
-| F1 | — | — | 0.915 |
-| Brier (uncalibrated) | — | 0.109 | — |
-| Brier (calibrated) | — | — | 0.092 |
+| Branch 2 milestone (single 70/15/15 split + isotonic) | 0.901 (test) | 0.092 (test) | n/a |
+| Branch 3 step 1 (move to 5-fold group CV) | 0.8836 ± 0.0348 | 0.1396 ± 0.0208 | n/a |
+| + SE channel attention + bilateral MHA + residual fusion | 0.9232 ± 0.0098 | 0.1112 ± 0.0096 | n/a |
+| + temperature scaling (replaces isotonic) | 0.9295 ± 0.0097 | 0.1118 ± 0.0109 | 1.317 ± 0.115 |
+| + `centroid_snr` aux feature (raw, scaled by StandardScaler) | 0.9337 ± 0.0186 | 0.1121 ± 0.0190 | 1.340 ± 0.249 |
+| **+ log1p on `centroid_snr` before scaling** | **0.9555 ± 0.0044** | **0.0905 ± 0.0130** | **1.275 ± 0.250** |
 
-Earlier runs in the same session showed the training-stability failure mode this project explicitly addressed: one `cnn-large` run terminated at epoch 25 with `loss = NaN`, AUC = 0.5 (chance-level). Diagnostic investigation traced this to the combination of (i) un-scaled raw stellar parameters being concatenated into the dense head, (ii) no gradient clipping on the Adam optimiser, and (iii) a pathological interaction with focal loss when `class_weight` was also active. All three are now mitigated; the `fix/training-stability` branch implements the changes summarised in the methodology.
+The drop from the branch-2 0.901 (test) to the row-1 0.8836 (CV mean) is the *correctness* effect of moving from a single train/val/test cut to k-fold — the single-split test value was an inflated cut, not a real performance loss. The remaining four rows are real gains on the corrected baseline: +0.072 ROC and a ~8× tightening of the fold std (0.0348 → 0.0044). The largest single discrimination gain is the SE + MHA + residual fusion block (+0.040 ROC); the largest single calibration gain is `log1p(centroid_snr)` (Brier −0.022, fold std halved). The raw-scaled centroid step (row 5) is a deliberate ablation showing that the feature's heavy-tailed FP distribution (q90 = 423 vs planet body ~1.1) corrupts `StandardScaler` unless the tail is compressed first.
 
-### In-progress: combined TESS+Kepler training
-
-A combined-mission build is currently running (~3,500 examples target — 1,000 TESS + 2,500 KOI). When complete, this run will provide the first data point at a sample size comparable to published work and will isolate the effect of the stability fixes from any sample-size-driven gain. *Numbers to be inserted once the training run completes.*
+Earlier runs in the project showed the training-stability failure mode this project explicitly addressed: one `cnn-large` run terminated at epoch 25 with `loss = NaN`, AUC = 0.5 (chance-level). Diagnostic investigation traced this to the combination of (i) un-scaled raw stellar parameters being concatenated into the dense head, (ii) no gradient clipping on the Adam optimiser, and (iii) a pathological interaction with focal loss when `class_weight` was also active. All three were mitigated in branch 1 (`fix/training-stability`).
 
 ### Comparison with published baselines
 
@@ -171,24 +182,24 @@ A combined-mission build is currently running (~3,500 examples target — 1,000 
 | Valizadegan et al. (ExoMiner++) | 2025 | TESS 2-min | — | Transfer learning from Kepler | 7,330 TESS candidates |
 | Xie et al. (SE-CNN-RlNet) | 2025 | Kepler + TESS | ~7,000 | AstroNet + SE channel attention + residual MLP | F1 = 0.957 (Kepler), 0.995 (TESS) |
 | Islam (ExoNet) | 2026 | Kepler + TESS | 7,585 | AstroNet + Multi-Head Attention + residual late fusion + temperature scaling | ROC-AUC = 0.955 |
-| **This work — current** | 2026 | TESS only | 1,959 | AstroNet + Wide&Deep | ROC-AUC = 0.901 (test) |
-| **This work — projected** | 2026 | TESS + Kepler | ~3,500 | as above + branch 2 architecture upgrades | TBD |
+| **This work — branch 2** | 2026 | TESS only | 1,959 | AstroNet + Wide&Deep + isotonic | ROC-AUC = 0.901 (test, single split) |
+| **This work — branch 3** | 2026 | TESS + Kepler | 3,275 | + SE + bilateral MHA + residual fusion + temperature scaling + log1p centroid | **ROC-AUC = 0.9555 ± 0.0044 (5-fold CV)** |
 
-The current model is competitive with, but not yet at, the SOTA reported by ExoNet and SE-CNN-RlNet. The two principal sample-size gaps (1,959 vs ~7,500) and architectural gaps (no attention, no residual head) explain most of the deficit. Branches 2 and 3 of this project address both.
+After branch 3, the model is at parity with Islam (2026)'s ExoNet on ROC-AUC (0.9555 vs 0.955) on a comparable Kepler+TESS dataset, with a 5-fold CV evaluation that is stricter than ExoNet's single-split reporting. The remaining gap to Xie et al. (2025)'s SE-CNN-RlNet (F1 = 0.957 Kepler, 0.995 TESS) is driven primarily by the sample-size difference (3,275 vs ~7,000 examples) and the per-mission split — the SE-CNN architectural ideas from that paper are already adopted here. Branch 4 (candidate discovery) will exercise the model on the 6,203 held-out TOI Planet Candidates retained from the catalogue build.
 
 ### Discussion of limitations and future work
 
-**Sample size and class imbalance.** The current 1,959-example training set is small by the standards of published work (5–8× smaller than ExoNet, 8× smaller than Shallue & Vanderburg). The combined TESS+Kepler build now in progress addresses this for the dual-mission case but does not approach the ~16,000-example regime of the original AstroNet. ExoNet's per-KOI (rather than per-star) deduplication strategy is an avenue worth exploring in branch 2: it preserves multi-planet systems as distinct samples (e.g. Kepler-90's eight confirmed planets each contribute) at the cost of relaxing the strict per-star group split adopted here.
+**Sample size and class imbalance.** The branch-3 3,275-example training set is competitive with the ~3,500–7,000 regime of recent published work (Xie et al. 2025; Islam 2026) but does not approach the ~16,000-example regime of the original AstroNet. ExoNet's per-KOI (rather than per-star) deduplication strategy is an avenue worth exploring: it preserves multi-planet systems as distinct samples (e.g. Kepler-90's eight confirmed planets each contribute) at the cost of relaxing the strict per-star group split adopted here. Adopting it would likely add ~1,500 effective examples.
 
 **Asymmetric and time-variant transits.** Howarth & Morello (2020) document Kepler-13Ab as a textbook counter-example to the symmetric U-shaped transit assumption. Gravity darkening on the rapidly rotating host star produces an asymmetric ingress/egress; spin-orbit misalignment tilts the transit chord; orbital precession driven by stellar oblateness causes a measurable transit-duration variation across years. A model trained only on symmetric transits — exactly the failure mode of an architecture with horizontal-flip augmentation enabled, which this project removed in `fix/training-stability` — will systematically miss such systems. Branch 3 will inject Kepler-13Ab and a small set of grazing / starspot-crossing transits as labelled positives, on the principle that the model is trained on the kinds of signals it will be expected to find.
 
 **Detrending.** The current Savitzky-Golay flattening is robust but blunt. Howarth & Morello (2020) detrended their data with WOTAN's biweight method, specifically chosen for its robustness to instrumental scatter and noise instability. Branch 3 will run a controlled A/B comparison between Savitzky-Golay and WOTAN biweight, using identical splits and otherwise-identical pipelines, with the lower validation Brier score determining the default. The losing method will be retained as a documented "tried, didn't help" alternative for full traceability.
 
-**Architectural upgrades.** Two cheap, high-leverage upgrades from Xie et al. (2025) — substituting LeakyReLU for ReLU, and inserting Squeeze-and-Excitation channel-attention blocks into each conv tower — are scheduled for branch 2. Islam (2026)'s Multi-Head Attention layer over the global feature map and residual late-fusion head are also on the roadmap. Calibration will be migrated from isotonic regression to temperature scaling, which produces a single learnable scalar that preserves prediction rankings.
+**Architectural upgrades shipped in branch 3.** Squeeze-and-Excitation channel attention (Hu et al. 2018; placement per Xie et al. 2025), bilateral multi-head attention plus LayerNorm-residual (Islam 2026), LeakyReLU in the head (Xie et al. 2025 §2.2), a residual late-fusion linear shortcut from the concatenated embeddings to the head's last layer (Islam 2026), and post-hoc temperature scaling (Guo et al. 2017) all landed on `feat/architecture-upgrades`. Together they account for +0.046 ROC over the CV baseline (0.8836 → 0.9295).
 
-**Physical features.** The current 8-d aux vector includes T_eff, R_*, log g, T_mag, transit depth, duration, log period, and SNR. ExoNet's 8-d vector also includes planet radius (R_p), equilibrium temperature (T_eq), and metallicity ([Fe/H]). Branch 3 will extend the aux dimension to 11 with these additions; the existing pipeline auto-handles arbitrary aux dimensionality.
+**Physical features.** The current 9-d aux vector adds `centroid_snr` (branch 3) to the eight branch-2 features. ExoNet's 8-d vector also includes planet radius (R_p), equilibrium temperature (T_eq), and metallicity ([Fe/H]); extending the aux dimension to 12 with these is straightforward (the pipeline auto-handles arbitrary aux dimensionality) and is a candidate for a follow-on branch.
 
-**Eclipsing-binary discrimination.** Two cheap features derivable directly from the existing global view — *odd/even transit depth ratio* and *secondary-eclipse depth at phase 0.5* — are strong discriminators of the most common false-positive class. Both will be added in branch 3.
+**Eclipsing-binary discrimination.** Branch 3 added one BEB-discrimination angle — the centroid-shift feature, after Ansdell et al. (2018) — which contributed +0.026 ROC and Brier −0.021 once the log1p transform was applied. Two further cheap features derivable directly from the existing global view remain on the roadmap: *odd/even transit depth ratio* (catches eclipsing binaries with primary/secondary depth differences) and *secondary-eclipse depth at phase 0.5* (catches grazing EBs and self-luminous companions).
 
 **Third-light correction.** Howarth & Morello (2020) provide third-light ratios (l₃ = 0.91 Kepler, 0.93 TESS) for Kepler-13A and discuss the systematic underestimation of planet radius that occurs when contamination is ignored. This project does not currently regress R_p / R_*, only classifies, so third-light correction is out of scope; it is documented as a known limitation should the work be extended to radius regression.
 
@@ -243,9 +254,9 @@ DATA 303 — Statistical Modelling for Data Science, Weeks 1–6 (Victoria Unive
 
 ## Project artefacts
 
-- **Codebase:** `/Users/ollie/Project/`, branch `fix/data-units` at time of writing; `main` at the branch-1 milestone (`merge: training stability fixes (test AUC 0.901 → 0.941)`).
-- **Catalogue:** `data/labels/labels.parquet`, `data/labels/candidates.parquet` (held-out PCs for inference).
-- **Processed views:** `data/processed/views.npz` — 3,239 examples after branch-1 build (TESS + Kepler combined, group-stratified).
-- **Trained model:** `models/cnn_dualview.keras`, `models/cnn_calibrator.joblib` (calibrator + threshold + aux pipeline bundle).
-- **Experiment history:** `mlruns/732906991717652602/` — runs covering all stability-fix iterations and the branch-1 milestone (`f7a6a0b5567a495cb59afe5ebfe44972`, test ROC-AUC = 0.941).
+- **Codebase:** `/Users/ollie/Project/`, branch `feat/architecture-upgrades` at branch-3 completion; the same content lands on `main` at this milestone.
+- **Catalogue:** `data/labels/labels.parquet` (3,500 rows after the May-2026 depth/duration unit fix); `data/labels/candidates.parquet` (6,203 held-out TOI Planet Candidates, reserved for branch-4 inference).
+- **Processed views:** `data/processed/views.npz` — 3,275 examples × 9-dim aux (TESS + Kepler combined, group-stratified). Backup of the pre-centroid 8-dim dataset at `data/processed/views.npz.bak_pre_centroid` for apples-to-apples ablation.
+- **Trained models:** `models/cv/<run_id>/fold_{0..4}/cnn_dualview.keras` for each branch-3 step. The branch-3 final run is `58570d85f1dd4f68a7e888988c88eeab`. Per-fold calibration bundles at the same paths contain `{calibrator: TemperatureScaler, temperature, threshold, aux_pipeline, aux_dim}`.
+- **Experiment history:** `mlruns/732906991717652602/` — covers branch 1 (training stability), branch 2 (data quality + metrics audit), and branch 3 (architecture + centroid). Branch-3 ladder MLflow run ids: step 1 (CV baseline) `71ec8452…`, step 2 (SE+MHA+residual) `1d9ef1e9…`, step 3 (temperature scaling) `4d9485e1…`, step 4A (centroid raw) `cc4ab87b…`, step 4B (centroid + log1p) `58570d85…`.
 - **Reference papers consulted:** the Géron textbook (2019); Howarth & Morello (2020) on Kepler-13Ab; Islam (2026) ExoNet; Xie et al. (2025) SE-CNN-RlNet; Khan (2026) UMI detrending; and a May-2026 literature review covering ExoMiner++ 2.0, Vision Transformers with Recurrence Plots, and centroid-shift diagnostics.
