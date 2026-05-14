@@ -26,6 +26,7 @@ from omegaconf import DictConfig
 
 from exoplanet_hunter.data.download import LightCurveDownloader
 from exoplanet_hunter.data.stellar import fetch_stellar_params
+from exoplanet_hunter.features.centroid import extract_centroid_offset
 from exoplanet_hunter.preprocess import build_views, clean_lightcurve, flatten_lightcurve
 from exoplanet_hunter.search import bls_period_search
 from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
@@ -134,25 +135,35 @@ def main(cfg: DictConfig) -> None:
             "global_view": views.global_view[None, :, None].astype(np.float32),
             "local_view": views.local_view[None, :, None].astype(np.float32),
         }
-        # Build the 8-dim aux vector exactly the way preprocess_only.py does:
-        # [teff, radius, logg, tmag, depth, duration, log_period, snr].
+        # Build the aux vector exactly the way preprocess_only.py does. The
+        # bundle's aux_pipeline carries n_features_in_ — 8 for legacy
+        # single-split bundles, 9 for branch-3 bundles that include centroid_snr.
+        # Branch-3 bundles also persist aux_dim explicitly as a fallback.
         if aux_pipeline is not None:
+            aux_dim = int(getattr(aux_pipeline, "n_features_in_", None) or bundle.get("aux_dim", 8))
             sp = fetch_stellar_params(tic_id)
-            aux_raw = np.array(
-                [
-                    [
-                        sp.teff if sp.teff is not None else np.nan,
-                        sp.radius if sp.radius is not None else np.nan,
-                        sp.logg if sp.logg is not None else np.nan,
-                        sp.tmag if sp.tmag is not None else np.nan,
-                        np.nan,  # depth — not known at inference unless user supplies it
-                        float(duration),
-                        float(np.log(period)) if period > 0 else np.nan,
-                        np.nan,  # snr — not available for ad-hoc TESS targets
-                    ]
-                ],
-                dtype=np.float32,
-            )
+            aux_row = [
+                sp.teff if sp.teff is not None else np.nan,
+                sp.radius if sp.radius is not None else np.nan,
+                sp.logg if sp.logg is not None else np.nan,
+                sp.tmag if sp.tmag is not None else np.nan,
+                np.nan,  # depth — not known at inference unless user supplies it
+                float(duration),
+                float(np.log(period)) if period > 0 else np.nan,
+                np.nan,  # snr — not available for ad-hoc TESS targets
+            ]
+            if aux_dim >= 9:
+                # Centroid extraction needs the RAW light curve (MOM_CENTR1/2
+                # columns are dropped during clean/flatten). raw is the
+                # lk.read() output from earlier — still intact here.
+                try:
+                    centroid_snr = float(extract_centroid_offset(raw, period, t0, duration))
+                except Exception as exc:
+                    log.warning("[score] centroid extraction failed: %s", exc)
+                    centroid_snr = float("nan")
+                aux_row.append(centroid_snr)
+                log.info("[score] centroid_snr = %.3f", centroid_snr)
+            aux_raw = np.array([aux_row], dtype=np.float32)
             inputs["aux_features"] = aux_pipeline.transform(aux_raw).astype(np.float32)
 
         result = mc_dropout_predict(model, inputs, n_samples=n_mc)
