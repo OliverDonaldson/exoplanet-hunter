@@ -60,3 +60,4 @@ multirun/
 
 # --- Run logs (build.log, training.log, etc.) ---
 *.log
+HANDOVER.md
