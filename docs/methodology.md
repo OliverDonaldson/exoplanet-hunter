@@ -100,7 +100,7 @@ is comparable to the literature.
    - **Global view** — 2,001 bins covering full phase. Carries information
      about secondary eclipses (warm Jupiters), out-of-transit baseline
      variability, and any *additional* transit dips at other phases.
-   - **Local view** — 201 bins covering ±2 transit durations around phase 0.
+   - **Local view** — 201 bins covering ±3 transit durations around phase 0.
      Captures the transit *shape* at high resolution: U-shape (planet) vs
      V-shape (eclipsing binary).
 
