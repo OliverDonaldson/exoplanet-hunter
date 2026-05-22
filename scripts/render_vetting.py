@@ -52,6 +52,8 @@ def main(cfg: DictConfig) -> None:
     prob_max = getattr(cfg, "prob_max", None)
     prob_max = float(prob_max) if prob_max is not None else None
     ascending = bool(getattr(cfg, "ascending", False))
+    tic_ids_cfg = getattr(cfg, "tic_ids", None) or []
+    tic_ids = [int(t) for t in tic_ids_cfg]
     fold_disagree_max = getattr(cfg, "fold_disagree_max", None)
     fold_disagree_max = float(fold_disagree_max) if fold_disagree_max is not None else None
     centroid_max = getattr(cfg, "centroid_max", None)
@@ -68,23 +70,37 @@ def main(cfg: DictConfig) -> None:
 
     # Filter
     ok = scored[scored.status == "ok"].copy()
-    ok = ok[ok.prob_mean >= prob_threshold]
-    if prob_max is not None:
-        ok = ok[ok.prob_mean <= prob_max]
+    if tic_ids:
+        # Explicit TIC list — bypass prob filters; still apply fold/centroid if set.
+        ok = ok[ok.tic_id.isin(tic_ids)]
+        missing = sorted(set(tic_ids) - set(ok.tic_id.astype(int).tolist()))
+        if missing:
+            log.warning("[render-vetting] %d TIC IDs not in scored set: %s", len(missing), missing)
+    else:
+        ok = ok[ok.prob_mean >= prob_threshold]
+        if prob_max is not None:
+            ok = ok[ok.prob_mean <= prob_max]
     if fold_disagree_max is not None:
         ok = ok[ok.fold_disagree <= fold_disagree_max]
     if centroid_max is not None:
         ok = ok[(ok.centroid_snr.isna()) | (ok.centroid_snr <= centroid_max)]
     ok = ok.sort_values("prob_mean", ascending=ascending).head(top_k).reset_index(drop=True)
-    log.info(
-        "[render-vetting] filtered to %d candidates (%.2f ≤ prob%s%s%s, sort=%s)",
-        len(ok),
-        prob_threshold,
-        f" ≤ {prob_max:.2f}" if prob_max is not None else "",
-        f", fold_sigma <= {fold_disagree_max}" if fold_disagree_max else "",
-        f", centroid ≤ {centroid_max}" if centroid_max else "",
-        "asc" if ascending else "desc",
-    )
+    if tic_ids:
+        log.info(
+            "[render-vetting] filtered to %d candidates by explicit tic_ids (sort=%s)",
+            len(ok),
+            "asc" if ascending else "desc",
+        )
+    else:
+        log.info(
+            "[render-vetting] filtered to %d candidates (%.2f ≤ prob%s%s%s, sort=%s)",
+            len(ok),
+            prob_threshold,
+            f" ≤ {prob_max:.2f}" if prob_max is not None else "",
+            f", fold_sigma <= {fold_disagree_max}" if fold_disagree_max else "",
+            f", centroid ≤ {centroid_max}" if centroid_max else "",
+            "asc" if ascending else "desc",
+        )
 
     if len(ok) == 0:
         log.warning("[render-vetting] nothing to render")

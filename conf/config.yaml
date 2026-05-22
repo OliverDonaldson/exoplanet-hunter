@@ -41,6 +41,7 @@ show_discrepancies: false  # also print model-vs-ExoFOP disagreements
 prob_threshold: 0.85    # render_vetting.py: min prob to render
 prob_max: null          # render_vetting.py: max prob to render (null = no ceiling)
 ascending: false        # render_vetting.py: sort ascending (true = render lowest first)
+tic_ids: []             # render_vetting.py: explicit TIC IDs (bypasses prob filters)
 fold_disagree_max: null # render_vetting.py: max fold spread
 centroid_max: null      # render_vetting.py: max centroid_snr
 
