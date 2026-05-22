@@ -25,7 +25,7 @@ ranked priority list of 6,200 unconfirmed candidates with uncertainty bands.
 
 ## Headline top pick — TOI-4328.01
 
-![TOI-4328.01 vetting figure](results/vetting/tic_77175217_p703.794.png)
+![TOI-4328.01 vetting figure](docs/figures/toi-4328-01_tic_77175217.png)
 
 A P = 703.79 d, ~800 ppm long-period TESS candidate (TIC 77175217) where
 the BLS periodogram lacks the statistical power to flag the transit but the
@@ -65,9 +65,9 @@ generalisation check, not a benchmark claim.
 
 | Candidate | TIC / KIC | Period (d) | `prob_mean` | `fold_disagree` | Vetting figure |
 |---|---|---|---|---|---|
-| TOI-4328.01 | TIC 77175217 | 703.79 | **0.989** | 0.006 | [tic_77175217_p703.794.png](results/vetting/tic_77175217_p703.794.png) |
-| TOI-4565.01 | TIC 381897917 | 692.51 | 0.983 | 0.008 | [tic_381897917_p692.515.png](results/vetting/tic_381897917_p692.515.png) |
-| TOI-4353.01 | TIC 176797879 | 718.18 | 0.980 | 0.009 | [tic_176797879_p718.181.png](results/vetting/tic_176797879_p718.181.png) |
+| TOI-4328.01 | TIC 77175217 | 703.79 | **0.989** | 0.006 | [docs/figures/toi-4328-01_tic_77175217.png](docs/figures/toi-4328-01_tic_77175217.png) |
+| TOI-4565.01 | TIC 381897917 | 692.51 | 0.983 | 0.008 | [docs/figures/toi-4565-01_tic_381897917.png](docs/figures/toi-4565-01_tic_381897917.png) |
+| TOI-4353.01 | TIC 176797879 | 718.18 | 0.980 | 0.009 | [docs/figures/toi-4353-01_tic_176797879.png](docs/figures/toi-4353-01_tic_176797879.png) |
 
 Full top-20 figures in [`results/vetting/`](results/vetting). All three
 top picks are long-period TESS detections — the regime where TESS's
