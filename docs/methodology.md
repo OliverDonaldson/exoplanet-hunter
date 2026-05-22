@@ -1,14 +1,24 @@
-# Methodology
+# Methodology — technical reference
 
-> Portfolio write-up for the Exoplanet Hunter project. Companion to the
-> top-level [README](../README.md), which covers usage; this document covers
-> *why* the system is built the way it is. For headline results,
-> ablation ladders, and bibliography see
-> [Research_Report.md](Research_Report.md).
+> Implementation-detail companion to
+> [`Research_Report.md`](Research_Report.md). The research report is the
+> reader-facing narrative — results, ablation ladder, comparisons with
+> published baselines, limitations, and the Branch-4 discovery write-up.
+> *This* document is the reference for **how** the system is built:
+> architecture choices, preprocessing rationale, training protocol,
+> evaluation setup, and the design decisions behind each.
 >
-> **Status:** Updated 2026-05-19 to reflect the branch-3 final architecture
-> (5-fold group-stratified CV, SE + MHA + residual fusion, temperature
-> scaling, 9-dim aux with `centroid_snr`).
+> Read [`Research_Report.md`](Research_Report.md) first if you want to know
+> *what* the project did and *what it found*. Read this if you want to
+> reproduce, audit, or extend the pipeline.
+>
+> **Status:** Updated 2026-05-22. Architecture and training protocol reflect
+> the Branch-3 final state — 5-fold group-stratified CV, SE + bilateral MHA
+> + residual fusion, temperature scaling, 9-dim aux vector with
+> `centroid_snr`, direct-archive Kepler downloader. The Branch-4
+> discovery-pool application (5,388 / 6,200 candidates scored, 146
+> high-confidence picks at `prob_mean ≥ 0.95`) is documented in the
+> research report.
 
 ## 1. Problem statement
 
