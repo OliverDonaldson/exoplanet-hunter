@@ -4,7 +4,7 @@
 > top-level [README](../README.md), which covers usage; this document covers
 > *why* the system is built the way it is. For headline results,
 > ablation ladders, and bibliography see
-> [research_report_draft.md](research_report_draft.md).
+> [Research_Report.md](Research_Report.md).
 >
 > **Status:** Updated 2026-05-19 to reflect the branch-3 final architecture
 > (5-fold group-stratified CV, SE + MHA + residual fusion, temperature
@@ -369,7 +369,7 @@ Once the model is trained, the discovery loop runs through
 
 ## 9. References
 
-Cited in this document; see [research_report_draft.md](research_report_draft.md)
+Cited in this document; see [Research_Report.md](Research_Report.md)
 for the full bibliography.
 
 - Ansdell, M., et al. (2018). *ApJL* 869, L7.

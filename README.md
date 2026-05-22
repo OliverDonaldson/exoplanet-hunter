@@ -20,7 +20,7 @@ ranked priority list of 6,200 unconfirmed candidates with uncertainty bands.
 > takes already-flagged candidates (TOI-PC, KOI-CANDIDATE) and produces a
 > calibrated probability that the signal is a real transit. Independent
 > follow-up is still required for confirmation. See
-> [docs/research_report_draft.md](docs/research_report_draft.md#methodological-note-on-cross-study-recall-comparison)
+> [docs/Research_Report.md](docs/Research_Report.md#methodological-note-on-cross-study-recall-comparison)
 > for the careful comparison with published baselines.
 
 ## Headline top pick — TOI-4328.01
@@ -145,7 +145,7 @@ src/exoplanet_hunter/   importable package
 conf/                   Hydra configs (model, data, train, preprocess)
 scripts/                CLI entry points
 docs/methodology.md     full architecture + design write-up
-docs/research_report_draft.md  results, ablation ladder, comparisons, limitations
+docs/Research_Report.md  results, ablation ladder, comparisons, limitations
 results/vetting/        six-panel vetting figures for the top-20 picks
 notebooks/              exploration notebooks
 tests/                  pytest — synthetic-transit fixtures
@@ -174,7 +174,7 @@ All free, no auth required:
 
 ## See also
 
-- [**docs/research_report_draft.md**](docs/research_report_draft.md) —
+- [**docs/Research_Report.md**](docs/Research_Report.md) —
   full results, ablation ladder, comparisons with published baselines,
   Branch-4 discovery results, limitations & future work.
 - [**docs/methodology.md**](docs/methodology.md) — architecture detail,
@@ -199,7 +199,7 @@ All free, no auth required:
   ed. *(DATA 305 reference text)*
 
 Full bibliography in
-[docs/research_report_draft.md](docs/research_report_draft.md#references).
+[docs/Research_Report.md](docs/Research_Report.md#references).
 
 ## License
 

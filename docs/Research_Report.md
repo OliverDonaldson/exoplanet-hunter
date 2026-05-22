@@ -3,7 +3,7 @@
 **Author:** Oliver Donaldson
 **Project type:** Personal research / portfolio piece
 **Background:** Data Science student, Victoria University of Wellington (DATA 305 — Machine Learning, DATA 303 — Statistical Modelling)
-**Status:** *Updated 2026-05-14 with branch-3 (architecture + centroid) final numbers. All "current" numbers now reflect 5-fold group-stratified cross-validation on 3,275 TESS+Kepler targets (MLflow run `58570d85f1dd4f68a7e888988c88eeab`). The earlier 21 April 2026 single-split baseline (`mlflow run 8dce07454c`, ROC-AUC = 0.901 test) is retained in the comparison table as the branch-2 milestone.*
+**Status:** *Updated 2026-05-22 with Branch-4 final results. All headline metrics reflect 5-fold group-stratified cross-validation on 3,275 TESS+Kepler targets (MLflow run `58570d85f1dd4f68a7e888988c88eeab`); Branch-4 covers the application of the ensemble to 6,200 held-out unconfirmed candidates (5,388 / 86.9 % successfully scored, 146 high-confidence picks at `prob_mean ≥ 0.95`). The earlier 21 April 2026 single-split baseline (`mlflow run 8dce07454c`, ROC-AUC = 0.901 test) is retained in the comparison table as the Branch-2 milestone.*
 
 ---
 
@@ -153,7 +153,19 @@ Training runs are launched via Hydra (`scripts/train_model.py`); all hyperparame
 | Brier (calibrated) | 0.0905 ± 0.0130 |
 | Temperature T* | 1.275 ± 0.250 |
 
-Per-fold ROC-AUC: 0.949, 0.953, 0.960, 0.961, 0.956 — every fold clears 0.948.
+**Full MLflow per-fold breakdown** (from `mlruns/.../58570d85f1dd4f68a7e888988c88eeab/artifacts/cv_summary.txt`):
+
+| Fold | ROC-AUC | PR-AUC | F1 | Brier | τ\* (F1-optimal) | T\* (temp) |
+|---|---|---|---|---|---|---|
+| 0 | 0.9488 | 0.9527 | 0.882 | 0.1058 | 0.21 | 1.091 |
+| 1 | 0.9525 | 0.9523 | 0.872 | 0.1065 | 0.09 | 1.708 |
+| 2 | 0.9595 | 0.9653 | 0.887 | 0.0768 | 0.23 | 1.219 |
+| 3 | 0.9609 | 0.9654 | 0.907 | 0.0794 | 0.37 | 0.991 |
+| 4 | 0.9555 | 0.9572 | 0.893 | 0.0839 | 0.44 | 1.366 |
+| **mean** | **0.9555** | **0.9586** | **0.888** | **0.0905** | — | **1.275** |
+| std | 0.0044 | 0.0058 | 0.012 | 0.0130 | — | 0.250 |
+
+Every fold clears 0.948 ROC-AUC. The temperature `T*` varies by fold (0.991 – 1.708) because each fold's validation logits land at slightly different overall confidence — a feature of fitting calibration per fold rather than globally, which keeps the calibration honest to the data the fold actually saw.
 
 **Ladder of incremental gains.** Each row below is an additive change with no other modifications; same 3,275-row 5-fold CV split throughout. T* is reported only for folds where temperature scaling is active.
 
@@ -202,6 +214,10 @@ The branch-3 5-fold ensemble was applied to all 6,200 held-out Planet Candidates
 
 The six new Kepler picks at `prob_mean ≥ 0.95` are all KOIs: KOI-3444.01 (KIC 5384713, P = 12.67 d, prob = 0.971), KOI-3034.01 (KIC 2973386, P = 31.02 d, prob = 0.969), KOI-6925.01 (KIC 7868967, P = 12.95 d, prob = 0.962), KOI-6276.01 (KIC 2557350, P = 3.10 d, prob = 0.957), KOI-6568.01 (KIC 5353938, P = 6.28 d, prob = 0.956), and KOI-8012.01 (KIC 10452252, P = 34.57 d, prob = 0.951). All six are still listed as `CANDIDATE` in the latest Kepler KOI cumulative table and were recovered by the direct-archive download path described above.
 
+![Six-panel vetting figure for TOI-4328.01 — the highest-probability unconfirmed candidate](figures/toi-4328-01_tic_77175217.png)
+
+*Six-panel vetting view of the top pick TOI-4328.01 (TIC 77175217). Top row: phase-folded global view, phase-folded local view (zoomed to ±3 transit durations), odd / even depth overlay. Bottom row: BLS periodogram with harmonics marked, centroid-shift diagram, ensemble probability with MC-Dropout standard-deviation band and per-fold dots. The combination of a clean shallow transit (~800 ppm), zero odd / even depth difference, a centroid SNR well below the BEB-warning threshold, and tight per-fold agreement (`fold_disagree = 0.006`) is what drives the `prob_mean = 0.989` score. The BLS periodogram lacks a dominant peak at the candidate period — exactly the regime where a learned dual-view model adds value over classical periodogram-only pipelines.*
+
 Two complementary rankings are produced downstream of these scores. Sorting by raw `prob_mean` surfaces the candidates with the strongest learned signal regardless of community attention — the top of that list is dominated by the long-period TESS picks above. The `discovery_score = prob_mean × (1 − fold_disagree) × 1/(1 + n_followup/3)` re-rank multiplicatively penalises high-follow-up candidates so that already-vetted TOIs sink and under-investigated targets surface; the top of that list is dominated by the six Kepler KOIs, which carry no `n_followup` value in the ExoFOP TFOPWG schema (TFOPWG follow-up tracking is a TESS-side construct) and therefore default to a full 1× multiplier. The asymmetry between the two missions in this score is an honest limitation of the simple formula and is noted as future work; the rest of this report reports top picks by `prob_mean`. Six-panel vetting figures for the top-20 have been rendered to `results/vetting/`; they constitute the prioritised list for manual review against ExoFOP TFOP files and any subsequent community follow-up. They remain candidates, not discoveries, until and unless independently confirmed.
 
 **Internal sanity check: recall on since-confirmed planets.** A 2026-05-18 snapshot of the NASA Exoplanet Archive Planetary Systems table was cross-referenced against the 6,200 held-out PCs by joining on TOI base ID and requiring orbital period agreement within 2 %. This identified **120 candidates that were labelled `PC` at training-catalogue build time but have since been promoted to confirmed-planet status by other surveys / follow-up programs**. These planets were never seen by the model during training but are known to be real. They are not discoveries by this work — the confirmations were performed elsewhere — but they serve as a real-world generalisation check on a population the model never trained on:
@@ -221,9 +237,17 @@ The mean `prob_mean` across the 120 confirmed planets is 0.80, consistent with w
 
 *Category 1 — model correctly suspicious of likely background-EB signature (2 of 5).* TOI-2886 b (P = 1.60 d, prob = 0.222) and TOI-3474 b (P = 3.88 d, prob = 0.396) both exhibit deep V-shaped transits combined with extreme centroid shifts (in-transit centroid SNR = 27.7 and 16.6 respectively, far above the 3.0 BEB-warning threshold). The dual-view CNN and the centroid feature jointly downweight these, which is the scientifically correct response to the available photometric data — the centroid shift indicates the dip is most likely leaking from a fainter source within the aperture, not from the TIC target. The planets' subsequent confirmations almost certainly relied on independent radial-velocity or high-resolution imaging that resolved the photometric ambiguity.
 
+![Category-1 miss: TOI-2886 b — model correctly suspicious of background-EB signature](figures/miss-cat1_toi-2886-01_tic_318796593_beb.png)
+
+*Category-1 example. TOI-2886 b (TIC 318796593): the local-view panel shows a deep V-shaped transit, the centroid-shift panel reports an in-transit offset of 27.7σ (vs the 3σ BEB threshold), and the ensemble probability lands at 0.222 with a wide MC-Dropout band — the model is honestly uncertain because the photometric evidence genuinely looks more like a background eclipsing binary than an on-target planet. The candidate was later confirmed via independent follow-up that the photometry alone cannot replicate.*
+
 *Category 2 — wide-binary dilution (1 of 5).* TOI-3523 A b (P = 2.30 d, prob = 0.417). The "A" suffix marks this as the bright component of a known wide binary; the companion star contaminates the photometric aperture and produces a centroid SNR of 5.2, just above the BEB threshold. As with category 1, the model is correctly suspicious of what its inputs show; the resolution requires non-photometric vetting.
 
 *Category 3 — genuine borderline / edge-of-distribution (2 of 5).* TOI-1291 b (P = 7.16 d, prob = 0.464) is extremely shallow (~500 ppm) with a mild centroid concern (SNR = 4.3). TOI-4773 b (P = 1.75 d, prob = 0.481) shows an asymmetric dip-then-bump morphology in its phase fold, consistent with starspot crossings or grazing geometry — exactly the kind of asymmetric transit (cf. Kepler-13Ab, Szabó et al. 2020) flagged in the limitations section as a known training-data gap. Both express honest model uncertainty: ensemble σ values of 0.112 and 0.132 are 15–20× larger than the top-picks σ (~0.007), indicating "I don't know" rather than confident rejection.
+
+![Category-3 miss: TOI-4773 b — asymmetric ingress-egress morphology, training-data gap](figures/miss-cat3_toi-4773-01_tic_415276070_asymmetric.png)
+
+*Category-3 example. TOI-4773 b (TIC 415276070): the global and local views show an asymmetric dip-then-bump shape inconsistent with the symmetric U-shape the model learned to recognise. The centroid SNR is fine (1.9, below the BEB threshold) so the model can't reject on EB grounds, but the morphology is far enough from the training-set distribution that the prediction sits at 0.481 with ensemble σ = 0.132 — a textbook "I don't know" output rather than a confident rejection. Injecting Kepler-13Ab-style asymmetric transits as labelled positives (see Discussion) is the proposed fix.*
 
 The first two categories — three of five — are arguably correct decisions on the photometric evidence available; the model is performing the EB-rejection it was trained to perform, and the catalogue's confirmation status relies on non-photometric vetting that the model cannot see. The third category exposes the only systematic training-data gap: very shallow signals and asymmetric / spot-crossed transits are under-represented in the labelled positives. This motivates the future-work item of injecting Kepler-13Ab-like asymmetric transits and starspot-crossing examples as labelled positives (see Discussion below).
 
