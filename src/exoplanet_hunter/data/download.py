@@ -14,13 +14,46 @@ directories (e.g. internal SSD vs external USB) via ``kepler_cache_dir``.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from exoplanet_hunter.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+# ----------------------------------------------------------------------------
+# Direct-archive Kepler download — bypasses MAST's CAOMv240 search backend by
+# hitting the public archive.stsci.edu HTTP listing endpoint directly. This is
+# the same FITS data lightkurve fetches (same files, same URLs ultimately) but
+# without the CAOM search-layer indirection, which is what fails during MAST
+# database outages (`Cannot open database "CAOMv240"` etc.).
+# ----------------------------------------------------------------------------
+_KEPLER_ARCHIVE_BASE = "https://archive.stsci.edu/pub/kepler/lightcurves"
+_KEPLER_LLC_PATTERN = re.compile(r"kplr\d+-\d+_llc\.fits")
+
+# Error substrings that indicate a TRANSIENT failure (MAST infrastructure
+# blip, network drop, server restart). These must NOT be cached as permanent
+# failures in the manifest — they should be retried on the next run.
+_TRANSIENT_ERROR_MARKERS: tuple[str, ...] = (
+    "CAOMv240", "SHUTDOWN", "Timeout", "network-related", "SQL Server",
+    "Connection aborted", "HTTPError", "RemoteDisconnected", "500 Server",
+)
+
+
+def _is_transient_error(reason: str | None) -> bool:
+    """True if `reason` looks like a transient infrastructure error.
+
+    Used by ``_record_failure`` to decide whether to persist the failure to
+    the manifest. Transient errors are returned to the caller but not cached.
+    """
+    if not reason:
+        return False
+    return any(marker in reason for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 @dataclass
@@ -165,31 +198,59 @@ class LightCurveDownloader:
                         reason=entry.get("reason", "previously failed"),
                     )
 
-        search_str = f"{mcfg['search']} {target_id}"
-        try:
-            search = lk.search_lightcurve(
-                search_str,
-                mission=mcfg["mission"],
-                author=mcfg["author"],
-                cadence=mcfg["cadence"],
-            )
-        except Exception as exc:                              # noqa: BLE001
-            return self._record_failure(target_id, mission, f"search error: {exc}")
+        dl_dir = self._target_path(target_id, mission).parent / ".lightkurve"
 
-        if len(search) == 0:
-            return self._record_failure(target_id, mission, "no pipeline data")
+        # --- Try direct archive first (Kepler only) ---
+        # archive.stsci.edu serves the same Kepler LLC FITS files lightkurve
+        # eventually downloads, but via a plain HTTP listing endpoint that is
+        # on different infrastructure from MAST's CAOMv240 search backend.
+        # When CAOM is down (which happens), this path still works.
+        lc_collection = None
+        if mission == "Kepler":
+            try:
+                lc_collection = self._fetch_kepler_via_direct_archive(target_id, dl_dir)
+                log.debug(
+                    "[download] KIC %d: %d quarters via direct archive",
+                    target_id, len(lc_collection),
+                )
+            except FileNotFoundError as exc:
+                # Permanent: archive listing has no LLC files for this KIC.
+                return self._record_failure(target_id, mission, f"no archive data: {exc}")
+            except Exception as exc:                          # noqa: BLE001
+                log.warning(
+                    "[download] direct archive failed for KIC %d (%s); "
+                    "falling back to CAOM search",
+                    target_id, exc,
+                )
+                # lc_collection stays None — fall through to lightkurve path.
 
-        try:
-            dl_dir = self._target_path(target_id, mission).parent / ".lightkurve"
-            lc_collection = search.download_all(
-                download_dir=str(dl_dir),
-            )
-        except Exception as exc:                              # noqa: BLE001
-            return self._record_failure(target_id, mission, f"download error: {exc}")
+        # --- Fallback / TESS path: lightkurve.search_lightcurve + download_all ---
+        if lc_collection is None:
+            search_str = f"{mcfg['search']} {target_id}"
+            try:
+                search = lk.search_lightcurve(
+                    search_str,
+                    mission=mcfg["mission"],
+                    author=mcfg["author"],
+                    cadence=mcfg["cadence"],
+                )
+            except Exception as exc:                          # noqa: BLE001
+                return self._record_failure(target_id, mission, f"search error: {exc}")
 
-        if lc_collection is None or len(lc_collection) == 0:
-            return self._record_failure(target_id, mission, "empty download")
+            if len(search) == 0:
+                return self._record_failure(target_id, mission, "no pipeline data")
 
+            try:
+                lc_collection = search.download_all(
+                    download_dir=str(dl_dir),
+                )
+            except Exception as exc:                          # noqa: BLE001
+                return self._record_failure(target_id, mission, f"download error: {exc}")
+
+            if lc_collection is None or len(lc_collection) == 0:
+                return self._record_failure(target_id, mission, "empty download")
+
+        # --- Shared: stitch the per-quarter/sector LCs into one ---
         try:
             stitched = lc_collection.stitch()
         except Exception as exc:                              # noqa: BLE001
@@ -220,10 +281,18 @@ class LightCurveDownloader:
         return result
 
     def _record_failure(self, target_id: int, mission: str, reason: str) -> DownloadResult:
+        """Log + return a failure result.
+
+        Transient failures (MAST outage, network drop) are NOT persisted to
+        the manifest — they should be retried on the next run. Permanent
+        failures (no pipeline data, no archive data, malformed FITS) are
+        cached so re-runs don't hammer MAST for known-empty targets.
+        """
         log.warning("[download] %s %d: %s", mission, target_id, reason)
-        key = f"{mission}:{target_id}"
-        self._manifest[key] = {"success": False, "reason": reason}
-        self._save_manifest()
+        if not _is_transient_error(reason):
+            key = f"{mission}:{target_id}"
+            self._manifest[key] = {"success": False, "reason": reason}
+            self._save_manifest()
         return DownloadResult(
             target_id=target_id,
             mission=mission,
@@ -233,6 +302,69 @@ class LightCurveDownloader:
             path=None,
             reason=reason,
         )
+
+    # ----------------------------------------------- direct-archive (Kepler)
+
+    def _direct_archive_kepler_fits(
+        self, kic: int, dl_dir: Path, timeout: int = 30,
+    ) -> list[Path]:
+        """Download every Kepler LLC FITS for a KIC from archive.stsci.edu.
+
+        Path scheme::
+
+            https://archive.stsci.edu/pub/kepler/lightcurves/{KIC[:4]}/{KIC:09d}/
+
+        Returns the list of local FITS paths (one per quarter).
+
+        Raises
+        ------
+        FileNotFoundError
+            Listing returned 404 or contains no LLC files (permanent gap —
+            this KIC has no Kepler data).
+        requests.RequestException
+            Network / HTTP error against the archive (transient — the caller
+            may fall back to the CAOM search path).
+        """
+        kic_padded = f"{kic:09d}"
+        listing_url = f"{_KEPLER_ARCHIVE_BASE}/{kic_padded[:4]}/{kic_padded}/"
+
+        r = requests.get(listing_url, timeout=timeout)
+        if r.status_code == 404:
+            raise FileNotFoundError(f"archive 404 for KIC {kic}")
+        r.raise_for_status()
+
+        filenames = sorted(set(_KEPLER_LLC_PATTERN.findall(r.text)))
+        if not filenames:
+            raise FileNotFoundError(f"no LLC FITS in archive listing for KIC {kic}")
+
+        dl_dir.mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+        for fn in filenames:
+            local = dl_dir / fn
+            if not local.exists() or local.stat().st_size == 0:
+                url = listing_url + fn
+                with requests.get(url, stream=True, timeout=timeout * 2) as rr:
+                    rr.raise_for_status()
+                    with open(local, "wb") as fh:
+                        for chunk in rr.iter_content(chunk_size=64 * 1024):
+                            if chunk:
+                                fh.write(chunk)
+            paths.append(local)
+        return paths
+
+    def _fetch_kepler_via_direct_archive(
+        self, kic: int, dl_dir: Path,
+    ) -> Any:
+        """Direct-archive Kepler downloader → ``lk.LightCurveCollection``.
+
+        Wraps ``_direct_archive_kepler_fits`` by reading each downloaded FITS
+        with ``lk.read`` and wrapping the result in a ``LightCurveCollection``
+        compatible with the existing stitch + write code path.
+        """
+        import lightkurve as lk
+        fits_paths = self._direct_archive_kepler_fits(kic, dl_dir)
+        lcs = [lk.read(str(p)) for p in fits_paths]
+        return lk.LightCurveCollection(lcs)
 
     # ----------------------------------------------------------------- batch
 

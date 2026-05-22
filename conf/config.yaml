@@ -25,6 +25,26 @@ t0: null
 duration_h: null
 n_mc: 50             # MC-Dropout forward passes
 
+# CLI-only fields read by scripts/score_candidates.py. Defaults score the full
+# pool with the branch-3 final 5-fold ensemble.
+max_candidates: null   # truncate to first N (sanity check)
+limit_mission: null    # "TESS" | "Kepler" | null (both)
+cv_dir: models/cv/58570d85f1dd4f68a7e888988c88eeab
+out_path: results/candidates_scored.parquet
+save_every: 25
+
+# CLI-only fields read by scripts/discovery_shortlist.py and render_vetting.py.
+prob_min: 0.8           # min prob_mean for shortlist
+followup_max: null      # max community follow-ups (null = no cap)
+top_k: 30               # how many candidates to print/render
+show_discrepancies: false  # also print model-vs-ExoFOP disagreements
+prob_threshold: 0.85    # render_vetting.py: min prob to render
+prob_max: null          # render_vetting.py: max prob to render (null = no ceiling)
+ascending: false        # render_vetting.py: sort ascending (true = render lowest first)
+tic_ids: []             # render_vetting.py: explicit TIC IDs (bypasses prob filters)
+fold_disagree_max: null # render_vetting.py: max fold spread
+centroid_max: null      # render_vetting.py: max centroid_snr
+
 paths:
   root:           ${oc.env:PROJECT_ROOT,${hydra:runtime.cwd}}
   data_raw:       ${paths.root}/data/raw
