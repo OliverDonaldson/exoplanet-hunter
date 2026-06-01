@@ -33,13 +33,13 @@ build a classifier that can tell a real transit apart from the many things
 that mimic one — eclipsing binary stars, instrumental glitches, starspot
 modulation, background blends — and run it on unreviewed targets.
 
-This is the same problem Shallue & Vanderburg (2018) attacked with the
+This is the same problem Shallue & Vanderburg[^sv2018] attacked with the
 original AstroNet on Kepler data, which led to the discovery of Kepler-90 i.
-Subsequent work — Ansdell et al. (2018) added stellar context and
-centroid-shift features; Yu et al. (2019) extended the architecture to TESS;
-Dattilo et al. (2019) transferred it to K2; Valizadegan et al. (2022, 2025)
-built the multi-branch ExoMiner family; Xie et al. (2025) added
-Squeeze-and-Excitation channel attention plus a residual head; Islam (2026)
+Subsequent work — Ansdell et al.[^ansdell2018] added stellar context and
+centroid-shift features; Yu et al.[^yu2019] extended the architecture to TESS;
+Dattilo et al.[^dattilo2019] transferred it to K2; Valizadegan et al. built the multi-branch ExoMiner family
+(ExoMiner[^valiz2022]; ExoMiner++[^valiz2025]); Xie et al.[^xie2025] added
+Squeeze-and-Excitation channel attention plus a residual head; Islam[^islam2026]
 introduced trimodal late fusion with multi-head attention and post-hoc
 temperature scaling — has refined this baseline. The architecture chosen
 here is the AstroNet skeleton extended with the ideas from Xie et al. and
@@ -57,7 +57,7 @@ Islam.
 
 All five are free, no auth needed, and queryable from Python. The full
 catalogue build is `src/exoplanet_hunter/data/catalog.py`. Per Christiansen
-et al. (2025) the NEA + ExoFOP services are the canonical references for
+et al.[^christiansen2025] the NEA + ExoFOP services are the canonical references for
 this entire data pipeline.
 
 ### Label scheme
@@ -88,7 +88,7 @@ is comparable to the literature.
    lightkurve two-sided clip would treat deep transit dips as negative
    outliers and delete them; the lower bound is left at +∞.
 2. **Flatten** — Savitzky-Golay filter (`window_length=301` for 2-min
-   cadence ≈ 10 hours, `polyorder=3`). The window must be much wider than
+   cadence ≈ 10 hours, `polyorder=2`). The window must be much wider than
    the transit duration or the transit gets filtered out alongside the
    stellar variability. *Crucially*, in-transit cadences are masked out of
    the fit using the known ephemeris from the catalogue row; otherwise the
@@ -100,7 +100,7 @@ is comparable to the literature.
    - **Global view** — 2,001 bins covering full phase. Carries information
      about secondary eclipses (warm Jupiters), out-of-transit baseline
      variability, and any *additional* transit dips at other phases.
-   - **Local view** — 201 bins covering ±2 transit durations around phase 0.
+   - **Local view** — 201 bins covering ±3 transit durations around phase 0.
      Captures the transit *shape* at high resolution: U-shape (planet) vs
      V-shape (eclipsing binary).
 
@@ -119,10 +119,10 @@ containing `global_views`, `local_views`, `labels`, `tic_ids`, and a
 ```
 
 The centroid-shift feature `centroid_snr` (added in branch 3, after
-Ansdell et al. 2018) is the magnitude of the in-transit photocentre offset
+Ansdell et al.[^ansdell2018]) is the magnitude of the in-transit photocentre offset
 in units of σ, after detrending the raw `MOM_CENTR1/2` columns for Kepler
 quarterly rolls and per-segment drift. Genuine on-target transits give
-values ≲ 3; background eclipsing binaries give values ≳ 3. Implementation
+values ≤ ~3; background eclipsing binaries give values ≥ ~3. Implementation
 in `src/exoplanet_hunter/features/centroid.py`. The feature is **log1p
 transformed** before standard-scaling, because its FP distribution is
 heavy-tailed (q90 = 423, max ≈ 10,000) and feeding it raw to
@@ -145,11 +145,10 @@ global view. Why RF specifically:
 
 ### 4.2 Dual-view 1D CNN (`models/cnn_dualview.py`)
 
-The headline model. Architecture is Shallue & Vanderburg (2018)'s AstroNet
-extended with Squeeze-and-Excitation channel attention (Hu et al. 2018;
-placement per Xie et al. 2025), bilateral multi-head self-attention and
-residual late fusion (Islam 2026), and LeakyReLU(α=0.1) in the head
-(Xie et al. 2025 §2.2):
+The headline model. Architecture is Shallue & Vanderburg[^sv2018]'s AstroNet
+extended with Squeeze-and-Excitation channel attention (Hu et al.[^hu2018]; placement per Xie et al.[^xie2025]), bilateral multi-head self-attention and
+residual late fusion[^islam2026], and LeakyReLU(α=0.1) in the head
+(Xie et al.[^xie2025] §2.2):
 
 ```
 global_view (2001,) ─► Conv tower (3 blocks 16,32,64 + SE per block)
@@ -173,28 +172,28 @@ Key design choices:
 - **Two towers of different depths.** The global view (2,001 bins) carries
   more structure and gets the deeper tower; the local view (201 bins) is
   zoomed on the transit so a shallower tower preserves resolution.
-- **Squeeze-and-Excitation (Hu et al. 2018).** A GAP → FC(C/r) → ReLU →
+- **Squeeze-and-Excitation[^hu2018].** A GAP → FC(C/r) → ReLU →
   FC(C) → Sigmoid → channel-scale block re-weights the conv channels by
   global context. Branch 3 placement is after each conv block, before the
-  MaxPool, per Xie et al. (2025) Fig. 1.
-- **Multi-Head Attention (Islam 2026 §III.D).** 8-head self-attention with
+  MaxPool, per Xie et al.[^xie2025] Fig. 1.
+- **Multi-Head Attention (Islam[^islam2026] §III.D).** 8-head self-attention with
   residual + LayerNorm at the end of each conv tower, applied to the
   `(B, T, C)` feature map *before* GlobalAveragePool. Attention lets the
   model upweight ingress/egress cadences (where the morphology lives) and
   downweight the flat baseline.
-- **Wide & Deep auxiliary path (Géron Ch. 10).** A 1% dip on a giant star
+- **Wide & Deep auxiliary path (Géron[^geron2019] Ch. 10).** A 1% dip on a giant star
   implies a stellar companion, not a planet. Letting `T_eff / R_* / log g /
   T_mag / depth / duration / log P / SNR / centroid_snr` bypass the conv
   layers — concatenated directly with the pooled tower embeddings — is the
   Wide & Deep pattern. Short-circuits the convolutional bottleneck for
   features that aren't time series.
-- **Residual fusion head (Islam 2026 §III.D).** Two-layer MLP (256, 128
+- **Residual fusion head (Islam[^islam2026] §III.D).** Two-layer MLP (256, 128
   units) with LeakyReLU + BatchNorm + Dropout(p=0.4), wrapped in a linear
   shortcut from the concatenated embeddings to the head's last layer
   dimension. The shortcut prevents gradient stagnation in the fusion path
   before the encoders converge.
 - **Dropout stays on at inference** (`training=True` in the head). Enables
-  MC-Dropout uncertainty quantification (Gal & Ghahramani 2016): a
+  MC-Dropout uncertainty quantification[^gal2016]: a
   candidate's "I'm 0.95 confident" is meaningful only with its
   spread across 30+ stochastic forward passes.
 - **Focal loss option** (`models/losses.py`) for severe class imbalance,
@@ -248,14 +247,14 @@ python scripts/train_model.py model=baseline_rf
   val/test/inference. Persisted alongside the model so `score_target.py`
   reproduces the exact training-time preprocessing.
 - **Loss:** binary cross-entropy by default; binary focal loss (γ=2,
-  α=0.75) optionally available (Lin et al. 2017).
+  α=0.75) optionally available[^lin2017].
 
 ### Augmentation
 
 - Gaussian noise (σ = 5×10⁻⁴), small phase shifts (±0.5%), random depth
   scaling (±5%), 2% random bin masking.
 - **Time-flip augmentation was removed** (`fix/training-stability`) on
-  the basis of Szabó et al. (2020): real transits are not perfectly
+  the basis of Szabó et al.[^szabo2020]: real transits are not perfectly
   symmetric — gravity darkening on rapidly rotating stars produces
   asymmetric ingress/egress, and flipping these mislabels the geometry.
 
@@ -264,11 +263,11 @@ python scripts/train_model.py model=baseline_rf
 `EarlyStopping(monitor='val_auc', patience=25, restore_best=True)`,
 `ModelCheckpoint(monitor='val_auc')`, `ReduceLROnPlateau(monitor='val_loss',
 factor=0.5, patience=8)`. Standard Keras callback toolbox from
-Géron Ch. 11.
+Géron[^geron2019] Ch. 11.
 
 ### Calibration
 
-Post-hoc **temperature scaling** (Guo et al. 2017; ExoNet 2026). A single
+Post-hoc **temperature scaling** (Guo et al.[^guo2017]; ExoNet[^islam2026]). A single
 scalar T > 0 fitted on validation logits by negative-log-likelihood
 minimisation, applied at inference as `sigmoid(logit / T)`. Rank-preserving:
 ROC-AUC and PR-AUC are identical pre- and post-calibration, but Brier and
@@ -290,7 +289,7 @@ set and choosing the value that maximises F1.
 |---|---|
 | **Hydra** | Composable YAML configs (`model=`, `data=`, `train=`) |
 | **MLflow** | Every hyperparameter, metric, plot, model artefact |
-| **Optuna** | Bayesian hyperparameter search with median pruning (planned) |
+| **Optuna** | Bayesian hyperparameter search with median pruning (scaffolded via `make tune` + `conf/train/tune.yaml`; not exercised for the branch-3 headline numbers) |
 | **`lightkurve`** | MAST querying, downloading, stitching |
 | **`astroquery`** | TIC v8 / Gaia DR3 stellar-parameter lookups |
 | **Ruff + mypy + pytest** | Pre-commit linting, type checking, fixture tests |
@@ -311,7 +310,7 @@ A miscalibrated model with great AUC still produces unreliable candidate
 rankings. This is also why temperature scaling is fitted per-fold rather
 than once on a held-out set.
 
-## 7. Discovery (branch 4, in progress)
+## 7. Discovery (branch 4)
 
 Once the model is trained, the discovery loop runs through
 `scripts/score_candidates.py` and `scripts/render_vetting.py`:
@@ -366,7 +365,7 @@ Once the model is trained, the discovery loop runs through
   and vice versa. Periodic catalogue refreshes are the only mitigation;
   the project's training catalogue is refreshed via `data/catalog.py`.
 - **TFOPWG lag vs published-paper truth** — the TFOPWG disposition table
-  updates more slowly than the NEA PS table. 125 of the 6,200 PCs in
+  updates more slowly than the NEA PS table. 120 of the 6,200 PCs in
   our discovery pool already have peer-reviewed confirmation papers in
   the PS snapshot — useful as a blind validation set.
 - **Stellar parameter coverage** is uneven; many fainter TICs have only
@@ -398,6 +397,24 @@ for the full bibliography.
 - Szabó, Gy. M., et al. (2020). *MNRASL* 492, L17. (Kepler-13Ab; replaces an
   earlier Howarth & Morello citation in this project after PDF audit.)
 - Valizadegan, H., et al. (2022). *ApJ* 926, 120. (ExoMiner)
-- Valizadegan, H., et al. (2025). *ApJ*, in press. (ExoMiner++)
+- Valizadegan, H., et al. (2025). *AJ* 170, 287. (ExoMiner++)
 - Xie, D., et al. (2025). *Research in Astronomy and Astrophysics* 25, 104004.
 - Yu, L., et al. (2019). *AJ* 158, 25. (AstroNet-Triage / TESS)
+
+
+<!-- Footnote definitions (citations) -->
+[^sv2018]: Shallue, C. J., & Vanderburg, A. (2018). Identifying exoplanets with deep learning: A five-planet resonant chain around Kepler-80 and an eighth planet around Kepler-90. *The Astronomical Journal*, 155(2), 94.
+[^ansdell2018]: Ansdell, M., Ioannou, Y., Osborn, H. P., et al. (2018). Scientific domain knowledge improves exoplanet transit classification with deep learning. *The Astrophysical Journal Letters*, 869(1), L7.
+[^yu2019]: Yu, L., Vanderburg, A., Huang, C. X., et al. (2019). Identifying exoplanets with deep learning. III. Automated triage and vetting of TESS candidates. *The Astronomical Journal*, 158(1), 25.
+[^dattilo2019]: Dattilo, A., Vanderburg, A., Shallue, C. J., et al. (2019). Identifying exoplanets with deep learning. II. Two new super-Earths uncovered by a neural network in K2 data. *The Astronomical Journal*, 157(5), 169.
+[^valiz2022]: Valizadegan, H., Martinho, M. J. S., Wilkens, L. S., et al. (2022). ExoMiner: A highly accurate and explainable deep learning classifier that validates 301 new exoplanets. *The Astrophysical Journal*, 926(2), 120.
+[^valiz2025]: Valizadegan, H., Martinho, M. J. S., Jenkins, J. M., et al. (2025). ExoMiner++: Enhanced transit classification and a new vetting catalog for 2-minute TESS data. *The Astronomical Journal*, 170(6), 287.
+[^xie2025]: Xie, D., Wang, Y., Liu, F., & Sun, W. (2025). Deep learning to classify exoplanet light curves in Kepler and TESS. *Research in Astronomy and Astrophysics*, 25, 104004.
+[^islam2026]: Islam, M. R. (2026). ExoNet: Calibrated multimodal deep learning for TESS exoplanet candidate vetting. *arXiv preprint* arXiv:2604.15560v3.
+[^christiansen2025]: Christiansen, J. L., McElroy, D. L., Harbut, M., et al. (2025). The NASA Exoplanet Archive and Exoplanet Follow-up Observing Program: Data, tools, and usage. *arXiv preprint* arXiv:2506.03299.
+[^hu2018]: Hu, J., Shen, L., & Sun, G. (2018). Squeeze-and-excitation networks. *Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)*, 7132–7141.
+[^geron2019]: Géron, A. (2019). *Hands-on machine learning with Scikit-Learn, Keras, and TensorFlow* (2nd ed.). O'Reilly Media.
+[^gal2016]: Gal, Y., & Ghahramani, Z. (2016). Dropout as a Bayesian approximation: Representing model uncertainty in deep learning. *Proceedings of the 33rd International Conference on Machine Learning (ICML)*, 1050–1059.
+[^lin2017]: Lin, T.-Y., Goyal, P., Girshick, R., He, K., & Dollár, P. (2017). Focal loss for dense object detection. *Proceedings of the IEEE International Conference on Computer Vision (ICCV)*, 2980–2988.
+[^szabo2020]: Szabó, Gy. M., Pribulla, T., Pál, A., et al. (2020). The clockwork is moving on — a combined analysis of TESS and Kepler measurements of Kepler-13Ab. *Monthly Notices of the Royal Astronomical Society Letters*, 492(1), L17–L21.
+[^guo2017]: Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On calibration of modern neural networks. *Proceedings of the 34th International Conference on Machine Learning (ICML)*, 70, 1321–1330.

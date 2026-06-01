@@ -10,7 +10,7 @@ SCRIPT_DIR := scripts
 
 .PHONY: help env install hooks clean lint format type test test-network \
         data data-small train train-rf train-cnn tune mlflow jupyter \
-        docker-build docker-up docker-down
+        pdf docs lock
 
 help:  ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} \
@@ -26,6 +26,10 @@ install:  ## Install the package in editable mode
 
 hooks:  ## Install pre-commit hooks
 	pre-commit install
+
+lock:  ## Freeze the active conda env to requirements-lock.txt for exact-pin reproducibility
+	pip freeze --exclude-editable > requirements-lock.txt
+	@echo "Wrote requirements-lock.txt"
 
 # --- Code quality -------------------------------------------------------------
 
@@ -72,16 +76,27 @@ mlflow:  ## Start a local MLflow tracking UI at http://localhost:5050
 jupyter:  ## Start JupyterLab
 	jupyter lab --no-browser
 
-# --- Docker -------------------------------------------------------------------
+# --- Docs ---------------------------------------------------------------------
+# `make pdf` regenerates docs/Research_Report.pdf from docs/Research_Report.md.
+# Requires: pandoc + xelatex (e.g. brew install pandoc; brew install --cask
+# mactex-no-gui) plus the DejaVu fonts (brew install --cask font-dejavu).
+# To swap fonts: `make pdf MAINFONT="TeX Gyre Termes" MONOFONT="DejaVu Sans Mono"`.
 
-docker-build:  ## Build the Docker image
-	docker compose build
+MAINFONT ?= DejaVu Serif
+MONOFONT ?= DejaVu Sans Mono
+PANDOC_OPTS := --pdf-engine=xelatex --toc --toc-depth=2 \
+               --include-in-header=preamble.tex \
+               -V geometry:margin=0.85in -V fontsize=10pt \
+               -V mainfont="$(MAINFONT)" -V monofont="$(MONOFONT)" \
+               -V colorlinks=true -V linkcolor=RoyalBlue \
+               -V urlcolor=RoyalBlue -V toccolor=black
 
-docker-up:  ## Start mlflow + jupyter services
-	docker compose up
+pdf:  ## Rebuild docs/Research_Report.pdf from Research_Report.md
+	@command -v pandoc >/dev/null || { echo "pandoc not found — brew install pandoc"; exit 1; }
+	cd docs && pandoc Research_Report.md -o Research_Report.pdf $(PANDOC_OPTS)
+	@echo "Wrote docs/Research_Report.pdf"
 
-docker-down:  ## Stop services
-	docker compose down
+docs: pdf  ## Alias for `make pdf`
 
 # --- Misc ---------------------------------------------------------------------
 

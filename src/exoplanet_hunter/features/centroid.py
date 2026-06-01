@@ -118,7 +118,7 @@ def _detrend_axis(
         cadence_days = float(np.median(diffs)) if diffs.size else 0.0208  # ≈30 min
         if not np.isfinite(cadence_days) or cadence_days <= 0:
             cadence_days = 0.0208
-        window_n = max(5, int(round(rolling_window_days / cadence_days)))
+        window_n = max(5, round(rolling_window_days / cadence_days))
         window_n = min(window_n, seg_c_sorted.size)
         if window_n % 2 == 0:
             window_n += 1  # odd for symmetric centring
