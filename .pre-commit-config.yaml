@@ -13,7 +13,7 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
-        args: ["--maxkb=2000"]
+        args: ["--maxkb=4000"]  # allow the ~2.8 MB Research_Report.pdf deliverable
       - id: check-merge-conflict
       - id: debug-statements
 

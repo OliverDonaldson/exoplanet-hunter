@@ -1,0 +1,63 @@
+% PDF formatting fixes for Research_Report.pdf (xelatex via pandoc).
+% These are PDF-only; the Markdown source still renders cleanly on GitHub.
+
+% --- Title page -------------------------------------------------------------
+% Override \maketitle to produce a full centred title page.
+% Page numbers appear top-right on all pages after the title page.
+\makeatletter
+% Define a minimal page style: page number top-right, no footer, no rule.
+\def\ps@topright{%
+  \def\@oddhead{\hfill\thepage}%
+  \def\@evenhead{\hfill\thepage}%
+  \def\@oddfoot{}%
+  \def\@evenfoot{}%
+}
+\renewcommand{\maketitle}{%
+  \begin{titlepage}
+    \centering
+    \vspace*{3cm}
+    {\large\bfseries \@title \par}
+    \vspace{2cm}
+    {\normalsize \@author \par}
+    \vspace{0.3cm}
+    {\normalsize Data Science Student, Victoria University of Wellington \par}
+    \vspace{0.1cm}
+    {\normalsize Personal research / portfolio piece \par}
+    \vspace{0.3cm}
+    {\normalsize \@date \par}
+  \end{titlepage}
+  \pagestyle{topright}
+}
+\makeatother
+
+% Let long inline code (\texttt) and URLs break across lines instead of
+% overrunning the right margin (the main cause of text falling off the page).
+\usepackage[htt]{hyphenat}
+\usepackage{xurl}
+
+% Break long inline code (file paths, dotted sklearn calls, run hashes) at ANY
+% character so they never overrun the margin — hyphenat alone won't break at
+% . _ ( ) = / which is where these tokens are longest.
+\usepackage{seqsplit}
+\let\origtexttt\texttt
+\renewcommand{\texttt}[1]{\origtexttt{\seqsplit{#1}}}
+
+% Give TeX extra room to break awkward lines rather than producing overfull
+% boxes that spill into the margin.
+\setlength{\emergencystretch}{3em}
+\usepackage{microtype}
+
+% Compact every table so the wide ones (e.g. the published-baselines
+% comparison) fit inside the text block and wrap rather than overflow.
+\usepackage{etoolbox}
+\AtBeginEnvironment{longtable}{\footnotesize}
+\AtBeginEnvironment{tabular}{\footnotesize}
+
+% Two-column glossary without a forced page break.
+\usepackage{multicol}
+
+% Keep figures closer to where they are referenced.
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.9}
+\renewcommand{\textfraction}{0.1}
+\renewcommand{\floatpagefraction}{0.8}

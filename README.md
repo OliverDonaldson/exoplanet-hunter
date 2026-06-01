@@ -3,7 +3,7 @@
 A calibrated deep-learning pipeline that **vets unconfirmed exoplanet transit
 candidates** from NASA TESS and Kepler light curves. Trained on 3,275
 human-vetted candidates, achieves headline parity with published vetting
-models (Islam 2026 / ExoNet) using ~½ the training data, and produces a
+models (Islam 2026 / ExoNet)[^islam2026] using ~½ the training data, and produces a
 ranked priority list of 6,200 unconfirmed candidates with uncertainty bands.
 
 | Metric | Value |
@@ -27,7 +27,8 @@ ranked priority list of 6,200 unconfirmed candidates with uncertainty bands.
 
 ![TOI-4328.01 vetting figure](docs/figures/toi-4328-01_tic_77175217.png)
 
-A P = 703.79 d, ~800 ppm long-period TESS candidate (TIC 77175217) where
+A P = 703.79 d, ~600 ppm long-period TESS candidate (TIC 77175217), and the
+single highest-probability unconfirmed candidate in the whole pool, where
 the BLS periodogram lacks the statistical power to flag the transit but the
 dual-view CNN scores it at `prob_mean = 0.989, fold_disagree = 0.006`. The
 single-transit nature over the TESS baseline makes long-period detections
@@ -41,16 +42,16 @@ trained on real NASA light curves actually identify exoplanet transits,
 and what would it take to build one end-to-end?* The result is this repo —
 a reproducible pipeline that ingests Kepler + TESS data from MAST,
 preprocesses it with the canonical phase-fold-and-bin scheme of Shallue &
-Vanderburg (2018), and feeds the views through a 1-D CNN extended with
-Squeeze-and-Excitation channel attention (Hu et al. 2018; Xie et al. 2025),
-bilateral multi-head attention with residual late-fusion (Islam 2026), and
+Vanderburg[^sv2018], and feeds the views through a 1-D CNN extended with
+Squeeze-and-Excitation channel attention[^hu2018] (per Xie et al.[^xie2025]),
+bilateral multi-head attention with residual late-fusion[^islam2026], and
 a Wide & Deep auxiliary path carrying 9 stellar/transit/centroid features.
 
 Training uses 5-fold `StratifiedGroupKFold` grouped on `tic_id` so
 multi-planet systems and re-observed stars are kept together (without this,
 test AUC was inflated by 2–5 points through "seen-this-star-before"
-leakage). Calibration is post-hoc temperature scaling (Guo et al. 2017),
-uncertainty is MC-Dropout (Gal & Ghahramani 2016) plus 5-fold ensemble
+leakage). Calibration is post-hoc temperature scaling[^guo2017],
+uncertainty is MC-Dropout[^gal2016] plus 5-fold ensemble
 disagreement.
 
 Applied to the 6,200 held-out unconfirmed Planet Candidates from the NEA
@@ -61,18 +62,24 @@ training-catalogue build but have since been confirmed elsewhere, **115
 (95.8 %) score above the standard 0.5 threshold** — an internal
 generalisation check, not a benchmark claim.
 
-## Top-3 unconfirmed picks (by `prob_mean`)
+## Top long-period unconfirmed picks (by `prob_mean`)
+
+TOI-4328.01 is the single highest-probability unconfirmed candidate in the
+whole pool. The three rows below are the strongest **long-period** (P > 500 d)
+picks specifically — the regime of greatest follow-up value; by raw
+`prob_mean` among the still-unconfirmed candidates they rank 1st, 6th and 11th,
+the intervening entries being shorter-period TESS objects.
 
 | Candidate | TIC / KIC | Period (d) | `prob_mean` | `fold_disagree` | Vetting figure |
 |---|---|---|---|---|---|
 | TOI-4328.01 | TIC 77175217 | 703.79 | **0.989** | 0.006 | [docs/figures/toi-4328-01_tic_77175217.png](docs/figures/toi-4328-01_tic_77175217.png) |
-| TOI-4565.01 | TIC 381897917 | 692.51 | 0.983 | 0.008 | [docs/figures/toi-4565-01_tic_381897917.png](docs/figures/toi-4565-01_tic_381897917.png) |
+| TOI-4565.01 | TIC 381897917 | 692.52 | 0.983 | 0.008 | [docs/figures/toi-4565-01_tic_381897917.png](docs/figures/toi-4565-01_tic_381897917.png) |
 | TOI-4353.01 | TIC 176797879 | 718.18 | 0.980 | 0.009 | [docs/figures/toi-4353-01_tic_176797879.png](docs/figures/toi-4353-01_tic_176797879.png) |
 
-Full top-20 figures in [`results/vetting/`](results/vetting). All three
-top picks are long-period TESS detections — the regime where TESS's
-sector-by-sector observing pattern makes confirmation hard and follow-up
-campaigns are lengthy, so prioritisation has real value.
+Full top-20 figures in [`results/vetting/`](results/vetting). These three
+long-period TESS detections sit in the regime where TESS's sector-by-sector
+observing pattern makes confirmation hard and follow-up campaigns are
+lengthy, so prioritisation has real value.
 
 ## How it works
 
@@ -90,7 +97,7 @@ catalog ──► downloader ──► preprocess ──► dual-view CNN ──
 Architecture (full detail in [`docs/methodology.md`](docs/methodology.md)):
 
 - **Global view** (2,001 bins covering full phase) and **local view** (201
-  bins covering ±2 transit durations around phase 0).
+  bins covering ±3 transit durations around phase 0).
 - **Global tower:** 3 conv blocks (16/32/64 filters), SE block after each.
   **Local tower:** 2 conv blocks (16/32 filters). 8-head Multi-Head
   Attention + residual + LayerNorm at the end of each tower before
@@ -127,7 +134,7 @@ python scripts/render_vetting.py top_k=20
 ```
 
 Experiment tracking is MLflow (`mlruns/`); the branch-3 final run is
-`58570d85f1dd4f68a7e888988c88eeab`.
+[`58570d85`](http://127.0.0.1:5050/#/experiments/732906991717652602/runs/58570d85f1dd4f68a7e888988c88eeab).
 
 ## Repo layout
 
@@ -200,6 +207,14 @@ All free, no auth required:
 
 Full bibliography in
 [docs/Research_Report.md](docs/Research_Report.md#references).
+
+<!-- Footnote definitions -->
+[^islam2026]: Islam, M. R. (2026). ExoNet: Calibrated multimodal deep learning for TESS exoplanet candidate vetting. *arXiv preprint* arXiv:2604.15560v3.
+[^sv2018]: Shallue, C. J., & Vanderburg, A. (2018). Identifying exoplanets with deep learning: A five-planet resonant chain around Kepler-80 and an eighth planet around Kepler-90. *The Astronomical Journal*, 155(2), 94.
+[^hu2018]: Hu, J., Shen, L., & Sun, G. (2018). Squeeze-and-excitation networks. *Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)*, 7132–7141.
+[^xie2025]: Xie, D., Wang, Y., Liu, F., & Sun, W. (2025). Deep learning to classify exoplanet light curves in Kepler and TESS. *Research in Astronomy and Astrophysics*, 25, 104004.
+[^guo2017]: Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On calibration of modern neural networks. *Proceedings of the 34th International Conference on Machine Learning (ICML)*, 70, 1321–1330.
+[^gal2016]: Gal, Y., & Ghahramani, Z. (2016). Dropout as a Bayesian approximation: Representing model uncertainty in deep learning. *Proceedings of the 33rd International Conference on Machine Learning (ICML)*, 1050–1059.
 
 ## License
 
