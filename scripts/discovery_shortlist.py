@@ -118,6 +118,17 @@ def _add_since_confirmed(
     j.loc[mask, "confirmed_pl_name"] = j.loc[mask, "pl_name"]
     j.loc[mask, "confirmed_releasedate"] = j.loc[mask, "releasedate"]
     j = j.drop(columns=["toi_base", "pl_name", "pl_orbper", "releasedate"], errors="ignore")
+    # A multi-planet TOI shares one `toi_base` across its sibling planets, so the
+    # left-merge above fans a single candidate into one row per sibling. The 2%
+    # period mask flags only the period-matched planet, leaving the sibling rows
+    # with confirmed_after_training=False. Collapse back to one row per candidate,
+    # keeping the matched (confirmed) row when present.
+    if "candidate_idx" in j.columns:
+        j = (
+            j.sort_values("confirmed_after_training", ascending=False, kind="stable")
+            .drop_duplicates(subset="candidate_idx", keep="first")
+            .sort_index()
+        )
     return j
 
 

@@ -46,7 +46,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"notebooks/**" = ["E402", "F401", "E702"]   # `;` to suppress matplotlib output is conventional
+"notebooks/**" = ["E402", "F401", "E702", "E712", "RUF001"]   # `;` to suppress matplotlib output is conventional
 "tests/**"     = ["B011"]
 
 [tool.ruff.format]
