@@ -10,7 +10,7 @@ date: "30 May 2026"
 ### The Spark & The Core Question
 This project was born in the Wellington library one afternoon when I noticed a glaring gap in my portfolio. While I had a solid foundation in software engineering, I lacked a definitive project that bridged my technical skillset with my deep interest in data science and astronomy. I didn't want to build a cookie-cutter tutorial project; I wanted to tackle something genuinely ambitious that grappled with real, un-sanitised scientific data. I wanted to apply the skills I had learned in my university courses to a project of my own designed to solve a problem that truly mattered to me. I wanted to build something that could, in principle, contribute to the discovery of new worlds beyond our solar system. After all, we pursue ambitious scientific discoveries **not because they are easy, but because they are hard**.
 
-I set out to answer two fundamental questions: **"Can a deep-learning model trained on real NASA TESS data actually identify exoplanet transits, and what would it take to build one?"**
+I set out to answer two fundamental questions: **"Can a deep-learning model trained on real NASA TESS and Kepler data actually identify exoplanet transits, and what would it take to build one?"**
 
 ---
 
