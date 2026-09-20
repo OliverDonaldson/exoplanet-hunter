@@ -42,7 +42,7 @@ from tqdm.auto import tqdm
 from exoplanet_hunter.data.download import LightCurveDownloader
 from exoplanet_hunter.features.centroid import extract_centroid_offset
 from exoplanet_hunter.models.uncertainty import mc_dropout_predict
-from exoplanet_hunter.preprocess import build_views, clean_lightcurve, flatten_lightcurve
+from exoplanet_hunter.preprocess import clean_lightcurve, flatten_and_build_views
 from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
 
 log = get_logger(__name__)
@@ -142,22 +142,12 @@ def _score_one(
 
     try:
         cleaned = clean_lightcurve(raw, sigma_clip=float(cfg.preprocess.cleaning.sigma_clip))
-        lc = flatten_lightcurve(
+        views = flatten_and_build_views(
             cleaned,
-            window_length=int(cfg.preprocess.flatten.window_length),
-            polyorder=int(cfg.preprocess.flatten.polyorder),
             period=period,
             t0=t0,
             duration=duration,
-        )
-        views = build_views(
-            lc,
-            period=period,
-            t0=t0,
-            duration=duration,
-            global_bins=int(cfg.preprocess.views.global_bins),
-            local_bins=int(cfg.preprocess.views.local_bins),
-            local_durations=float(cfg.preprocess.views.local_durations),
+            preprocess_cfg=cfg.preprocess,
         )
     except Exception as exc:
         return {**base, "status": "preprocess_fail", "reason": str(exc)}

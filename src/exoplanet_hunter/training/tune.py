@@ -12,7 +12,7 @@ Usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import hydra
 import mlflow
@@ -59,7 +59,7 @@ def main(cfg: DictConfig) -> float:
 
     def objective(trial: optuna.Trial) -> float:
         # Apply suggested overrides to a copy of the cfg.
-        trial_cfg = OmegaConf.create(OmegaConf.to_yaml(cfg))
+        trial_cfg = cast(DictConfig, OmegaConf.create(OmegaConf.to_yaml(cfg)))
         for key, spec in cfg.train.search_space.items():
             value = _suggest(trial, key, spec)
             OmegaConf.update(trial_cfg, key, value, force_add=True)
