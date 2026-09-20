@@ -27,7 +27,11 @@ from omegaconf import DictConfig
 from exoplanet_hunter.data.download import LightCurveDownloader
 from exoplanet_hunter.data.stellar import fetch_stellar_params
 from exoplanet_hunter.features.centroid import extract_centroid_offset
-from exoplanet_hunter.preprocess import build_views, clean_lightcurve, flatten_lightcurve
+from exoplanet_hunter.preprocess import (
+    clean_lightcurve,
+    flatten_and_build_views,
+    flatten_lightcurve,
+)
 from exoplanet_hunter.search import bls_period_search
 from exoplanet_hunter.utils import ProjectPaths, get_logger, set_global_seed
 
@@ -90,25 +94,14 @@ def main(cfg: DictConfig) -> None:
         t0 = float(t0)
         duration = float(duration_h) / 24.0
 
-    # Now re-flatten with the transit mask so the spline does not absorb
-    # the dip. Views are always built from this mask-flattened LC.
-    lc = flatten_lightcurve(
+    # Build views from a transit-masked re-flatten (so the spline does not
+    # absorb the dip). Shared with score_candidates.py via the package helper.
+    views = flatten_and_build_views(
         cleaned,
-        window_length=int(cfg.preprocess.flatten.window_length),
-        polyorder=int(cfg.preprocess.flatten.polyorder),
         period=period,
         t0=t0,
         duration=duration,
-    )
-
-    views = build_views(
-        lc,
-        period=period,
-        t0=t0,
-        duration=duration,
-        global_bins=int(cfg.preprocess.views.global_bins),
-        local_bins=int(cfg.preprocess.views.local_bins),
-        local_durations=float(cfg.preprocess.views.local_durations),
+        preprocess_cfg=cfg.preprocess,
     )
 
     # --- Score ----------------------------------------------------------

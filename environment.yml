@@ -41,6 +41,11 @@ dependencies:
       - pytest-cov>=5
       - ruff>=0.5
       - mypy>=1.10
+      # Type stubs — keep in sync with the mypy pre-commit hook's
+      # additional_dependencies so `make type` matches pre-commit.
+      - types-requests
+      - types-tqdm
+      - pandas-stubs
       - pre-commit>=3.7
       - nbstripout>=0.7
       - jupyterlab>=4.2

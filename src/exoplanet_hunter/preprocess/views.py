@@ -16,10 +16,11 @@ baseline and the transit dip is negative.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from exoplanet_hunter.preprocess.clean import flatten_lightcurve
 from exoplanet_hunter.preprocess.fold import fold_and_bin
 
 if TYPE_CHECKING:
@@ -113,4 +114,46 @@ def build_views(
     return Views(
         global_view=_normalise(gview).astype(np.float32),
         local_view=_normalise(lview).astype(np.float32),
+    )
+
+
+def flatten_and_build_views(
+    cleaned_lc: lk.LightCurve,
+    *,
+    period: float,
+    t0: float,
+    duration: float,
+    preprocess_cfg: Any,
+) -> Views:
+    """Mask-flatten a cleaned light curve at a known ephemeris, then bin into views.
+
+    The shared inference-time preprocessing tail used by both the single-target
+    scorer (`scripts/score_target.py`) and the bulk scorer
+    (`scripts/score_candidates.py`): the transit is masked out of the
+    Savitzky-Golay fit so the spline cannot absorb the dip, then the
+    masked-flat curve is phase-folded into (global, local) views. Keeping this
+    in one place means a single source of truth for inference preprocessing
+    (and a ready entry point for a future interactive scorer).
+
+    `preprocess_cfg` is the Hydra `preprocess` config node (i.e. `cfg.preprocess`),
+    mirroring the `model_cfg: Any` convention used by `build_cnn_dualview`. The
+    caller is responsible for cleaning (`clean_lightcurve`) first, since some
+    callers also need the cleaned curve for an unmasked BLS period search.
+    """
+    lc = flatten_lightcurve(
+        cleaned_lc,
+        window_length=int(preprocess_cfg.flatten.window_length),
+        polyorder=int(preprocess_cfg.flatten.polyorder),
+        period=period,
+        t0=t0,
+        duration=duration,
+    )
+    return build_views(
+        lc,
+        period=period,
+        t0=t0,
+        duration=duration,
+        global_bins=int(preprocess_cfg.views.global_bins),
+        local_bins=int(preprocess_cfg.views.local_bins),
+        local_durations=float(preprocess_cfg.views.local_durations),
     )
